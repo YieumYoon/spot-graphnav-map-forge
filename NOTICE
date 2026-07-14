@@ -1,0 +1,22 @@
+Spot GraphNav Map Forge
+Copyright 2026 Spot GraphNav Map Forge contributors
+
+This is an independent community project and is not affiliated with, sponsored by, or endorsed by
+Boston Dynamics, Inc.
+
+Boston Dynamics, Spot, Orbit, Autowalk, GraphNav, and related names and marks are the property of
+their respective owners. Their use in this project is solely to describe compatibility.
+
+The project depends on separately distributed Boston Dynamics Spot SDK Python packages. Those
+packages and their protocol definitions remain subject to the Boston Dynamics Software Development
+Kit License. They are not relicensed under the Apache License 2.0 and are not vendored here.
+
+Official SDK license:
+https://github.com/boston-dynamics/spot-sdk/blob/master/LICENSE
+
+Official terms and trademark information:
+https://bostondynamics.com/terms/
+
+The backup adapter implements community-observed compatibility with a version-sensitive archive
+format. No private customer backup, generated Walk, inspection image, credential, or proprietary
+product binary is included in this distribution.

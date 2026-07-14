@@ -1,0 +1,16 @@
+.venv/
+.DS_Store
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.playwright-cli/
+dist/
+build/
+*.egg-info/
+workspace/
+output/
+*.tar
+*.walk
+*.walk.zip
+.env
