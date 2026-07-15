@@ -29,6 +29,7 @@ gate. Always run `inspect`, `audit`, `validate`, and `validate-walk` before a di
 | Final Site Map waypoint reconstruction | Supported | Offline structural and semantic checks |
 | Active/manual/loop-closure edges | Supported | Final site-level edge records and validation |
 | Polygon and halo selection | Supported | Deterministic offline planning |
+| Unanchored/remnant cleanup | Supported | Exact exclusions and protected dependencies recorded in plan/audit |
 | Waypoint and snapshot cloning | Supported | Closed references and source-ID leak checks |
 | Ordinary action payloads | Supported alpha | Offline semantic checks and Orbit 5.1.8 UI import |
 | Waypoint-relative action targets | Supported alpha | Exact observed payload copy and UI placement |
@@ -36,6 +37,8 @@ gate. Always run `inspect`, `audit`, `validate`, and `validate-walk` before a di
 | Dock definitions | Experimental | Offline conversion only until UI/runtime/re-export gates pass |
 | Explicit relocalization | Experimental | Offline public-message equivalence only |
 | Opaque tablet metadata | Experimental | Optional unchanged copy from a user-supplied template |
+| Waypoint recording-session relabel | Experimental | Public metadata rewrite verified offline; product display remains an import gate |
+| Explicit orphan triggered-record exclusion | Supported audit control | Exact ID, eligible parent, and reason required; no migration claim |
 | Triggered AI inspection migration | Unsupported | Public Walk cannot encode the private parent trigger |
 | Existing missions and schedules | Unsupported | Intentionally not cloned |
 | Site View panorama history | Unsupported | Historical imagery is not available as a transferable action |
@@ -53,6 +56,12 @@ The tool stops rather than claiming compatibility when:
 - dock references cross the selection boundary;
 - opaque Target defaults conflict;
 - an archive or output path violates structural expectations.
+
+The only triggered-record exception is an exact, reason-bearing plan exclusion for an operator-
+confirmed incomplete or orphaned record. It remains visible in the audit and clone manifest.
+
+Changing a waypoint recording-session label does not assign a fleet-manager recording UUID. The
+server controls any recording identity created during manual import.
 
 Warnings are not success claims. Read every validation report before import.
 

@@ -12,6 +12,8 @@ const elements = {
   zoneName: $("#zone-name"),
   haloHops: $("#halo-hops"),
   cloneHaloActions: $("#clone-halo-actions"),
+  excludeUnanchored: $("#exclude-unanchored-waypoints"),
+  excludeDependencyFree: $("#exclude-dependency-free-components"),
   showUnanchored: $("#show-unanchored"),
   save: $("#save-plan"),
   saveHint: $("#save-hint"),
@@ -32,6 +34,9 @@ const elements = {
     manual: $("#stat-manual"),
     fiducial: $("#stat-fiducial"),
     loop: $("#stat-loop"),
+    cleanupUnanchored: $("#cleanup-unanchored"),
+    cleanupRemnants: $("#cleanup-remnants"),
+    cleanupComponents: $("#cleanup-components"),
   },
 };
 
@@ -40,6 +45,7 @@ const state = {
   waypointById: new Map(),
   actionsByWaypoint: new Map(),
   adjacency: new Map(),
+  selectionDependencyIds: new Set(),
   polygon: [],
   core: new Set(),
   halo: new Set(),
@@ -305,18 +311,72 @@ function computeSelection() {
   state.core.clear();
   state.halo.clear();
   if (!state.data || state.polygon.length < 3) {
-    updateStats([], 0);
+    updateStats([], 0, { unanchored: 0, remnants: 0, components: 0 });
     requestRender();
     return;
   }
+  const rawCore = new Set();
   for (const waypoint of state.data.waypoints) {
-    if (visibleWaypoint(waypoint) && pointInPolygon([waypoint.x, waypoint.y], state.polygon)) {
-      state.core.add(waypoint.id);
-    }
+    if (pointInPolygon([waypoint.x, waypoint.y], state.polygon)) rawCore.add(waypoint.id);
   }
   const hops = Math.max(0, Math.min(10, Number(elements.haloHops.value) || 0));
-  const distances = new Map([...state.core].map((id) => [id, 0]));
-  const queue = [...state.core];
+  const baselineDistances = expandHalo(rawCore, hops);
+  for (const id of rawCore) {
+    const waypoint = state.waypointById.get(id);
+    if (
+      !elements.excludeUnanchored.checked ||
+      waypoint.source !== "waypoint_tform_ko_unanchored"
+    ) {
+      state.core.add(id);
+    }
+  }
+  const distances = expandHalo(state.core, hops);
+  for (const [id, distance] of distances) {
+    if (distance > 0) state.halo.add(id);
+  }
+
+  let selected = new Set([...state.core, ...state.halo]);
+  const unanchoredExcluded = elements.excludeUnanchored.checked
+    ? [...baselineDistances.keys()].filter(
+        (id) =>
+          !selected.has(id) &&
+          state.waypointById.get(id)?.source === "waypoint_tform_ko_unanchored",
+      ).length
+    : 0;
+  let remnantWaypoints = 0;
+  if (elements.excludeDependencyFree.checked) {
+    const components = selectedComponents(selected);
+    const largestSize = components[0]?.size || 0;
+    for (const component of components) {
+      if (component.size === largestSize) continue;
+      if ([...component].some((id) => state.selectionDependencyIds.has(id))) continue;
+      remnantWaypoints += component.size;
+      for (const id of component) {
+        state.core.delete(id);
+        state.halo.delete(id);
+      }
+    }
+    selected = new Set([...state.core, ...state.halo]);
+  }
+
+  const components = selectedComponents(selected);
+  const selectedEdges = state.data.edges.filter(
+    (edge) => selected.has(edge.from) && selected.has(edge.to),
+  );
+  const actionIds = elements.cloneHaloActions.checked ? selected : state.core;
+  let actionCount = 0;
+  for (const id of actionIds) actionCount += state.waypointById.get(id)?.actions || 0;
+  updateStats(selectedEdges, actionCount, {
+    unanchored: unanchoredExcluded,
+    remnants: remnantWaypoints,
+    components: components.length,
+  });
+  requestRender();
+}
+
+function expandHalo(core, hops) {
+  const distances = new Map([...core].map((id) => [id, 0]));
+  const queue = [...core];
   for (let cursor = 0; cursor < queue.length; cursor += 1) {
     const id = queue[cursor];
     const distance = distances.get(id);
@@ -328,22 +388,31 @@ function computeSelection() {
       }
     }
   }
-  for (const [id, distance] of distances) {
-    if (distance > 0) state.halo.add(id);
-  }
-
-  const selected = new Set([...state.core, ...state.halo]);
-  const selectedEdges = state.data.edges.filter(
-    (edge) => selected.has(edge.from) && selected.has(edge.to),
-  );
-  const actionIds = elements.cloneHaloActions.checked ? selected : state.core;
-  let actionCount = 0;
-  for (const id of actionIds) actionCount += state.waypointById.get(id)?.actions || 0;
-  updateStats(selectedEdges, actionCount);
-  requestRender();
+  return distances;
 }
 
-function updateStats(selectedEdges, actionCount) {
+function selectedComponents(selected) {
+  const remaining = new Set(selected);
+  const components = [];
+  while (remaining.size) {
+    const root = remaining.values().next().value;
+    const component = new Set([root]);
+    const queue = [root];
+    remaining.delete(root);
+    for (let cursor = 0; cursor < queue.length; cursor += 1) {
+      for (const neighbor of state.adjacency.get(queue[cursor]) || []) {
+        if (!remaining.has(neighbor)) continue;
+        remaining.delete(neighbor);
+        component.add(neighbor);
+        queue.push(neighbor);
+      }
+    }
+    components.push(component);
+  }
+  return components.sort((left, right) => right.size - left.size);
+}
+
+function updateStats(selectedEdges, actionCount, cleanup) {
   const sources = new Map();
   for (const edge of selectedEdges) sources.set(edge.source, (sources.get(edge.source) || 0) + 1);
   elements.stats.core.textContent = state.core.size.toLocaleString();
@@ -357,6 +426,9 @@ function updateStats(selectedEdges, actionCount) {
   elements.stats.loop.textContent = (
     sources.get("EDGE_SOURCE_SMALL_LOOP_CLOSURE") || 0
   ).toLocaleString();
+  elements.stats.cleanupUnanchored.textContent = cleanup.unanchored.toLocaleString();
+  elements.stats.cleanupRemnants.textContent = cleanup.remnants.toLocaleString();
+  elements.stats.cleanupComponents.textContent = cleanup.components.toLocaleString();
   const ready = state.polygon.length >= 3 && state.core.size > 0;
   elements.selectionState.textContent = ready ? "READY" : "NO POLYGON";
   elements.selectionState.classList.toggle("ready", ready);
@@ -382,6 +454,7 @@ function buildIndexes() {
     state.actionsByWaypoint.get(action.waypoint_id).push(action);
   }
   state.adjacency = new Map();
+  state.selectionDependencyIds = new Set(state.data.selection_dependency_waypoint_ids || []);
   for (const edge of state.data.edges) {
     if (!state.adjacency.has(edge.from)) state.adjacency.set(edge.from, new Set());
     if (!state.adjacency.has(edge.to)) state.adjacency.set(edge.to, new Set());
@@ -546,6 +619,8 @@ async function savePlan() {
     polygon: state.polygon,
     halo_hops: Number(elements.haloHops.value),
     clone_halo_actions: elements.cloneHaloActions.checked,
+    exclude_unanchored_waypoints: elements.excludeUnanchored.checked,
+    exclude_dependency_free_components: elements.excludeDependencyFree.checked,
     overwrite: state.overwritePending,
   };
   try {
@@ -659,6 +734,8 @@ function bindEvents() {
   });
   elements.haloHops.addEventListener("input", computeSelection);
   elements.cloneHaloActions.addEventListener("change", computeSelection);
+  elements.excludeUnanchored.addEventListener("change", computeSelection);
+  elements.excludeDependencyFree.addEventListener("change", computeSelection);
   elements.showUnanchored.addEventListener("change", () => {
     fitMap();
     computeSelection();

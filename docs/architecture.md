@@ -39,6 +39,10 @@ backup schema.
 
 - `core_waypoint_ids` are inside or on the polygon.
 - `halo_waypoint_ids` are graph neighbors added by hop count.
+- optional unanchored cleanup runs before halo expansion so hidden local-frame remnants cannot
+  seed additional selections;
+- optional disconnected-remnant cleanup removes only non-largest components with no action, dock,
+  or panorama-state dependency;
 - an edge is retained only when both endpoints are selected;
 - core actions are selected by default;
 - halo actions require an explicit opt-in;
@@ -60,6 +64,10 @@ Copy mode generates deterministic UUIDv5 mappings for:
 - triggered AI inspection IDs and their parent references in the offline bundle;
 - SiteDock record IDs;
 - the exported Walk ID.
+
+The exported Walk ID is derived from the validated archive/display name and source Site Map ID.
+Using a different `--name` produces a different deterministic Walk ID without changing the cloned
+GraphNav object IDs in the bundle.
 
 GraphNav edge identity is defined by its remapped endpoint pair. Sensor, fiducial, and physical
 dock numbers are not object identities and remain unchanged.
@@ -85,6 +93,19 @@ Autowalk messages:
 Observed `mission_id` values are retained as source provenance, not treated as current Walk
 membership. Existing mission order is intentionally not cloned.
 
+## Recording-session labels
+
+GraphNav waypoints retain public `ClientMetadata`, including the recording-time `session_name`.
+With no override, export preserves those labels. `--recording-name` changes only the exported
+waypoints' `annotations.client_metadata.session_name`; it does not modify the clone bundle,
+waypoint identity, geometry, snapshot identity, recording timestamp, robot identity, or client
+identity.
+
+This label is not a fleet-manager recording object or recording UUID. The backup adapter may list
+source recording IDs for audit provenance, but it does not have a supported recording-to-waypoint
+lifecycle operation. Any new server-side recording identity remains an import-time product
+decision outside the offline CLI.
+
 ## Triggered AI boundary
 
 Observed triggered AI inspections are separate, waypoint-less SiteElements with a private parent
@@ -95,6 +116,11 @@ Normal export therefore fails when a selected zone contains a triggered AI inspe
 experimental `fold-into-parent` mode moves the public network-compute request into its capture
 parent, but it cannot encode the private trigger relationship. It is a normalization experiment,
 not a supported migration path.
+
+A plan may explicitly omit an exact triggered record only when an operator has independently
+confirmed that it is incomplete or orphaned and supplies a reason. The planner validates the ID
+and selected parent, and the audit and clone manifest retain the omission. This is an auditable
+exclusion, not migration support.
 
 ## Site View boundary
 

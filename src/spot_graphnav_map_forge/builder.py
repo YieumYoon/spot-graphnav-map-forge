@@ -10,6 +10,7 @@ from .actions import clone_site_element, clone_triggered_site_element
 from .archive import BackupArchive
 from .clone import clone_edge_snapshot, clone_subgraph, clone_waypoint_snapshot
 from .geometry import load_graph
+from .planner import resolve_triggered_action_exclusions
 from .wire import bytes_values, decode_fields
 
 
@@ -28,6 +29,29 @@ def build_clone(workspace: Path, plan_path: Path, out: Path) -> dict[str, object
     selected = core | halo
     clone_name = plan["zone_name"]
     result = clone_subgraph(graph, selected, clone_name)
+    snapshot_sources = metadata["snapshot_sources"]
+    copied_waypoint_snapshots = 0
+    copied_edge_snapshots = 0
+    source_backup = Path(metadata["source_backup"])
+    selected_actions = [
+        action
+        for action in metadata["actions"]
+        if action["waypoint_id"] in (selected if plan.get("clone_halo_actions") else core)
+    ]
+    selected_action_ids = {str(action["id"]) for action in selected_actions}
+    excluded_triggered_actions, exclusion_reason = resolve_triggered_action_exclusions(
+        metadata,
+        plan.get("excluded_triggered_action_ids", []),
+        plan.get("triggered_action_exclusion_reason"),
+        eligible_parent_ids=selected_action_ids,
+    )
+    excluded_triggered_action_ids = {str(action["id"]) for action in excluded_triggered_actions}
+    selected_triggered_actions = [
+        action
+        for action in metadata.get("triggered_actions", [])
+        if action.get("parent_element_id") in selected_action_ids
+        and str(action.get("id", "")) not in excluded_triggered_action_ids
+    ]
 
     out.mkdir(parents=True)
     waypoint_dir = out / "waypoint_snapshots"
@@ -42,21 +66,6 @@ def build_clone(workspace: Path, plan_path: Path, out: Path) -> dict[str, object
     dock_dir.mkdir()
     (out / "graph").write_bytes(result.graph.SerializeToString())
 
-    snapshot_sources = metadata["snapshot_sources"]
-    copied_waypoint_snapshots = 0
-    copied_edge_snapshots = 0
-    source_backup = Path(metadata["source_backup"])
-    selected_actions = [
-        action
-        for action in metadata["actions"]
-        if action["waypoint_id"] in (selected if plan.get("clone_halo_actions") else core)
-    ]
-    selected_action_ids = {str(action["id"]) for action in selected_actions}
-    selected_triggered_actions = [
-        action
-        for action in metadata.get("triggered_actions", [])
-        if action.get("parent_element_id") in selected_action_ids
-    ]
     cloned_actions: list[dict[str, object]] = []
     cloned_triggered_actions: list[dict[str, object]] = []
     cloned_docks: list[dict[str, object]] = []
@@ -258,6 +267,8 @@ def build_clone(workspace: Path, plan_path: Path, out: Path) -> dict[str, object
             "core_waypoint_ids": sorted(core),
             "halo_waypoint_ids": sorted(halo),
             "clone_halo_actions": bool(plan.get("clone_halo_actions")),
+            "excluded_triggered_action_ids": sorted(excluded_triggered_action_ids),
+            "cleanup": plan.get("selection_cleanup", {}),
         },
         "id_mappings": result.remapper.mappings,
         "counts": {
@@ -271,6 +282,7 @@ def build_clone(workspace: Path, plan_path: Path, out: Path) -> dict[str, object
                 bool(action["has_explicit_relocalization"]) for action in cloned_actions
             ),
             "triggered_actions_cloned": len(cloned_triggered_actions),
+            "triggered_actions_explicitly_excluded": len(excluded_triggered_actions),
             "triggered_action_images_cloned": sum(
                 len(action["images"]) for action in cloned_triggered_actions
             ),
@@ -280,6 +292,16 @@ def build_clone(workspace: Path, plan_path: Path, out: Path) -> dict[str, object
         "edge_source_counts": _edge_source_counts(result.graph),
         "actions": cloned_actions,
         "triggered_actions": cloned_triggered_actions,
+        "triggered_actions_excluded": [
+            {
+                "source_element_id": str(action["id"]),
+                "name": action.get("name"),
+                "source_parent_element_id": action.get("parent_element_id"),
+                "reason": exclusion_reason,
+                "disposition": "not_cloned_explicit_plan_exclusion",
+            }
+            for action in excluded_triggered_actions
+        ],
         "docks": cloned_docks,
         "docks_skipped": skipped_docks,
         "action_payloads_rewritten": True,

@@ -12,7 +12,7 @@ from typing import Any
 from bosdyn.api.graph_nav import map_pb2
 
 from .geometry import WaypointCoordinate, connected_components, load_graph
-from .planner import create_plan
+from .planner import create_plan, selection_dependency_waypoint_ids
 
 MAX_REQUEST_BYTES = 1_000_000
 ASSET_TYPES = {
@@ -91,6 +91,7 @@ def build_workspace_payload(workspace: Path) -> dict[str, object]:
             }
             for action in action_rows
         ],
+        "selection_dependency_waypoint_ids": sorted(selection_dependency_waypoint_ids(metadata)),
     }
 
 
@@ -115,6 +116,12 @@ def save_plan(workspace: Path, request: dict[str, Any]) -> tuple[Path, dict[str,
         zone_name=zone_name,
         halo_hops=halo_hops,
         clone_halo_actions=bool(request.get("clone_halo_actions", False)),
+        excluded_triggered_action_ids=request.get("excluded_triggered_action_ids", []),
+        triggered_action_exclusion_reason=request.get("triggered_action_exclusion_reason"),
+        exclude_unanchored_waypoints=bool(request.get("exclude_unanchored_waypoints", False)),
+        exclude_dependency_free_components=bool(
+            request.get("exclude_dependency_free_components", False)
+        ),
     )
     plans_dir = workspace / "plans"
     plans_dir.mkdir(parents=True, exist_ok=True)

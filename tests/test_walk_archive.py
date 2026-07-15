@@ -106,7 +106,9 @@ def _bundle(
     snapshot_id = "snapshot-cloned"
     old_mission_id = "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
     graph = map_pb2.Graph()
-    graph.waypoints.add(id=new_waypoint_id, snapshot_id=snapshot_id)
+    waypoint = graph.waypoints.add(id=new_waypoint_id, snapshot_id=snapshot_id)
+    waypoint.annotations.client_metadata.session_name = "source-session"
+    waypoint.annotations.client_metadata.client_id = "source-client"
     (bundle / "graph").write_bytes(graph.SerializeToString())
     snapshot = map_pb2.WaypointSnapshot(id=snapshot_id)
     (bundle / "waypoint_snapshots" / snapshot_id).write_bytes(snapshot.SerializeToString())
@@ -390,6 +392,48 @@ def test_export_walk_keeps_navigation_only_site_element(tmp_path: Path) -> None:
         walk = walks_pb2.Walk.FromString(archive.read("navigation.walk/missions/navigation.walk"))
     assert walk.elements[0].id == ids["element_id"]
     assert walk.elements[0].action.WhichOneof("action") is None
+
+
+def test_export_walk_can_replace_recording_session_and_refresh_walk_id(tmp_path: Path) -> None:
+    bundle, _ = _bundle(tmp_path)
+    original_output = tmp_path / "original.walk.zip"
+    refreshed_output = tmp_path / "refreshed.walk.zip"
+
+    original = export_walk_archive(bundle, original_output)
+    refreshed = export_walk_archive(
+        bundle,
+        refreshed_output,
+        name="fresh walk",
+        recording_name="fresh recording",
+    )
+
+    assert refreshed["walk_id"] != original["walk_id"]
+    assert refreshed["recording_session"] == {
+        "mode": "overridden",
+        "name": "fresh recording",
+        "source_names": {"source-session": 1},
+        "waypoints_updated": 1,
+    }
+    with zipfile.ZipFile(refreshed_output) as archive:
+        walk = walks_pb2.Walk.FromString(archive.read("fresh walk.walk/missions/fresh walk.walk"))
+        graph = map_pb2.Graph.FromString(archive.read("fresh walk.walk/graph"))
+    assert walk.id == refreshed["walk_id"]
+    assert walk.map_name == "fresh walk"
+    assert walk.mission_name == "fresh walk"
+    assert walk.global_parameters.group_name == "fresh walk"
+    assert graph.waypoints[0].annotations.client_metadata.session_name == "fresh recording"
+    assert graph.waypoints[0].annotations.client_metadata.client_id == "source-client"
+
+
+def test_export_walk_rejects_empty_recording_name(tmp_path: Path) -> None:
+    bundle, _ = _bundle(tmp_path)
+
+    with pytest.raises(ValueError, match="recording name cannot be empty"):
+        export_walk_archive(
+            bundle,
+            tmp_path / "bad-recording.walk.zip",
+            recording_name="   ",
+        )
 
 
 def test_export_walk_preserves_relocalize_presence_and_unknown_fields(tmp_path: Path) -> None:

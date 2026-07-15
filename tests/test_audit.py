@@ -36,6 +36,13 @@ def test_audit_reports_cross_partition_walk_and_missing_capture_history(tmp_path
             {"id": "action-0", "waypoint_id": "wp-0"},
             {"id": "action-2", "waypoint_id": "wp-2"},
         ],
+        "triggered_actions": [
+            {
+                "id": "triggered-0",
+                "name": "Incomplete AI placeholder",
+                "parent_element_id": "action-0",
+            }
+        ],
         "docks": [
             {
                 "id": "dock-complete",
@@ -57,6 +64,8 @@ def test_audit_reports_cross_partition_walk_and_missing_capture_history(tmp_path
     plan = {
         "core_waypoint_ids": ["wp-0", "wp-1"],
         "halo_waypoint_ids": [],
+        "excluded_triggered_action_ids": ["triggered-0"],
+        "triggered_action_exclusion_reason": "confirmed incomplete backup record",
     }
     plan_path = workspace / "zone.plan.json"
     plan_path.write_text(json.dumps(plan), encoding="utf-8")
@@ -65,6 +74,23 @@ def test_audit_reports_cross_partition_walk_and_missing_capture_history(tmp_path
 
     assert report["topology"]["boundary_edges"] == 1
     assert report["dependencies"]["actions"] == {"core": 1, "halo": 0, "remainder": 1}
+    assert report["dependencies"]["triggered_actions"] == {
+        "core": 1,
+        "halo": 0,
+        "remainder": 0,
+    }
+    assert report["dependencies"]["triggered_actions_retained"] == {
+        "core": 0,
+        "halo": 0,
+        "remainder": 0,
+    }
+    assert report["dependencies"]["triggered_action_exclusions"]["records"][0]["id"] == (
+        "triggered-0"
+    )
+    assert not any(
+        "selected triggered AI inspection" in blocker
+        for blocker in report["assessments"]["partition_preserve_ids"]["blockers"]
+    )
     assert report["dependencies"]["waypoint_pano_states"]["core"] == 1
     assert (
         report["dependencies"]["waypoint_pano_states"]["capture_history_status"]

@@ -379,6 +379,36 @@ input[type="number"]:focus {
   margin-top: 2px;
 }
 
+.cleanup-heading {
+  color: var(--faint);
+  font-family: "Fira Code", ui-monospace, monospace;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  margin-top: 3px;
+  text-transform: uppercase;
+}
+
+.cleanup-preview {
+  background: var(--panel-raised);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  display: grid;
+  gap: 6px;
+  padding: 9px 10px;
+}
+
+.cleanup-preview span {
+  color: var(--muted);
+  display: flex;
+  font-size: 10px;
+  justify-content: space-between;
+}
+
+.cleanup-preview strong {
+  color: var(--text);
+  font-family: "Fira Code", ui-monospace, monospace;
+}
+
 .section-title-row {
   align-items: center;
   display: flex;

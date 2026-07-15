@@ -47,9 +47,11 @@ uv run spot-map-forge build workspace/map-forge-poc \
 uv run spot-map-forge validate output/map-forge-poc
 
 uv run spot-map-forge export-walk output/map-forge-poc \
-  --out output/map-forge-poc.walk.zip
+  --out output/map-forge-poc-v2.walk.zip \
+  --name '<disposable-name>' \
+  --recording-name '<disposable-name>'
 
-uv run spot-map-forge validate-walk output/map-forge-poc.walk.zip
+uv run spot-map-forge validate-walk output/map-forge-poc-v2.walk.zip
 ```
 
 The generated Walk is a transport container, not a copy of an existing mission. Each ordinary
@@ -68,6 +70,13 @@ Import through the supported product UI using a disposable name. Pass the UI gat
 5. DAQ and alignment images render in their correct action slots;
 6. no action from outside the core selection appears unless halo actions were explicitly enabled;
 7. every boundary-cut edge or dock reported by the audit is absent from the imported map.
+8. the visible Walk and recording-session labels use the disposable name rather than a retained
+   source session label;
+9. the product treats the import as a new object where a server-side recording identity is shown.
+
+The offline exporter controls the public Walk ID and waypoint session label, not the product's
+recording UUID. Record only whether a new identity was assigned; do not copy that UUID into public
+test notes.
 
 Record only pass/fail results in public project documentation. Do not publish the map name,
 screenshots, action names, coordinates, IDs, asset counts, or archive itself.

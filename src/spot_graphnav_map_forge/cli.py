@@ -69,6 +69,28 @@ def _parser() -> argparse.ArgumentParser:
     plan_parser.add_argument("--zone-name", required=True)
     plan_parser.add_argument("--halo-hops", type=int, default=1)
     plan_parser.add_argument("--clone-halo-actions", action="store_true")
+    plan_parser.add_argument(
+        "--exclude-unanchored-waypoints",
+        action="store_true",
+        help="Exclude polygon/halo waypoints that cannot reach a map-layout control point.",
+    )
+    plan_parser.add_argument(
+        "--exclude-dependency-free-components",
+        action="store_true",
+        help="Exclude non-largest selected components with no actions, docks, or pano state.",
+    )
+    plan_parser.add_argument(
+        "--exclude-triggered-action",
+        action="append",
+        default=[],
+        dest="excluded_triggered_action_ids",
+        metavar="ID",
+        help="Explicitly omit one triggered SiteElement linked to a selected action; repeatable.",
+    )
+    plan_parser.add_argument(
+        "--triggered-action-exclusion-reason",
+        help="Required audit reason when --exclude-triggered-action is used.",
+    )
     plan_parser.add_argument("--out", type=Path, required=True)
     plan_parser.set_defaults(handler=_plan)
 
@@ -98,7 +120,17 @@ def _parser() -> argparse.ArgumentParser:
     export_walk_parser.add_argument("--out", type=Path, required=True)
     export_walk_parser.add_argument(
         "--name",
-        help="Archive/map display name; defaults to the clone name in the bundle manifest.",
+        help=(
+            "Archive/map/mission/group name and deterministic Walk-ID seed; defaults to the "
+            "clone name in the bundle manifest."
+        ),
+    )
+    export_walk_parser.add_argument(
+        "--recording-name",
+        help=(
+            "Replace every exported waypoint client-metadata session name. "
+            "Source geometry, timestamps, and client identity are preserved."
+        ),
     )
     export_walk_parser.add_argument(
         "--template-archive",
@@ -417,6 +449,10 @@ def _plan(args: argparse.Namespace) -> int:
         zone_name=args.zone_name,
         halo_hops=args.halo_hops,
         clone_halo_actions=args.clone_halo_actions,
+        excluded_triggered_action_ids=args.excluded_triggered_action_ids,
+        triggered_action_exclusion_reason=args.triggered_action_exclusion_reason,
+        exclude_unanchored_waypoints=args.exclude_unanchored_waypoints,
+        exclude_dependency_free_components=args.exclude_dependency_free_components,
     )
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(
@@ -483,6 +519,7 @@ def _export_walk(args: argparse.Namespace) -> int:
         args.bundle,
         args.out,
         name=args.name,
+        recording_name=args.recording_name,
         template_archive=args.template_archive,
         triggered_ai_mode=args.triggered_ai_mode,
     )

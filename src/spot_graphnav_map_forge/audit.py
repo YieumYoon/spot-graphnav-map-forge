@@ -11,7 +11,7 @@ from bosdyn.api.graph_nav import map_pb2
 from .archive import BackupArchive
 from .backup import SITE_WALK_PREFIX
 from .geometry import connected_components, load_graph
-from .planner import edge_source_counts
+from .planner import edge_source_counts, resolve_triggered_action_exclusions
 
 
 def create_preservation_audit(workspace: Path, plan_path: Path) -> dict[str, object]:
@@ -45,6 +45,24 @@ def create_preservation_audit(workspace: Path, plan_path: Path) -> dict[str, obj
 
     actions = metadata.get("actions", [])
     triggered_actions = metadata.get("triggered_actions", [])
+    selected_action_waypoints = selected if plan.get("clone_halo_actions") else core
+    selected_action_ids = {
+        str(action["id"])
+        for action in actions
+        if action.get("id") and action.get("waypoint_id") in selected_action_waypoints
+    }
+    excluded_triggered_actions, exclusion_reason = resolve_triggered_action_exclusions(
+        metadata,
+        plan.get("excluded_triggered_action_ids", []),
+        plan.get("triggered_action_exclusion_reason"),
+        eligible_parent_ids=selected_action_ids,
+    )
+    excluded_triggered_action_ids = {str(action["id"]) for action in excluded_triggered_actions}
+    retained_triggered_actions = [
+        action
+        for action in triggered_actions
+        if str(action.get("id", "")) not in excluded_triggered_action_ids
+    ]
     docks = metadata.get("docks", [])
     pano_states = metadata.get("pano_states", [])
     layout = metadata.get("map_layout") or {}
@@ -73,6 +91,12 @@ def create_preservation_audit(workspace: Path, plan_path: Path) -> dict[str, obj
     triggered_action_zones = _triggered_action_zone_counts(
         triggered_actions, actions, core, halo, remainder
     )
+    retained_triggered_action_zones = _triggered_action_zone_counts(
+        retained_triggered_actions, actions, core, halo, remainder
+    )
+    excluded_triggered_action_zones = _triggered_action_zone_counts(
+        excluded_triggered_actions, actions, core, halo, remainder
+    )
     explicit_relocalization_zones = _zone_counts(
         [row for row in actions if row.get("has_explicit_relocalization")],
         core,
@@ -98,9 +122,10 @@ def create_preservation_audit(workspace: Path, plan_path: Path) -> dict[str, obj
         partition_blockers.append(
             f"{boundary_docks} dock placement(s) cross the selected waypoint boundary"
         )
-    if triggered_action_zones["core"]:
+    if retained_triggered_action_zones["core"]:
+        retained_core_count = retained_triggered_action_zones["core"]
         partition_blockers.append(
-            f"{triggered_action_zones['core']} selected triggered AI inspection(s) have an "
+            f"{retained_core_count} selected triggered AI inspection(s) have an "
             "Orbit-only parent linkage that public Walk cannot encode"
         )
 
@@ -115,6 +140,7 @@ def create_preservation_audit(workspace: Path, plan_path: Path) -> dict[str, obj
             "remainder_waypoints": len(remainder),
             "core_components": len(connected_components(graph, core)),
             "remainder_components": len(connected_components(graph, remainder)),
+            "cleanup": plan.get("selection_cleanup", {}),
         },
         "topology": {
             "core_internal_edges": len(core_edges),
@@ -125,6 +151,20 @@ def create_preservation_audit(workspace: Path, plan_path: Path) -> dict[str, obj
         "dependencies": {
             "actions": _zone_counts(actions, core, halo, remainder),
             "triggered_actions": triggered_action_zones,
+            "triggered_actions_retained": retained_triggered_action_zones,
+            "triggered_action_exclusions": {
+                "reason": exclusion_reason,
+                "zone_counts": excluded_triggered_action_zones,
+                "records": [
+                    {
+                        "id": action["id"],
+                        "name": action.get("name"),
+                        "parent_element_id": action.get("parent_element_id"),
+                        "disposition": "not_cloned_explicit_plan_exclusion",
+                    }
+                    for action in excluded_triggered_actions
+                ],
+            },
             "explicit_relocalizations": explicit_relocalization_zones,
             "waypoint_pano_states": {
                 "core": core_pano,
@@ -164,6 +204,13 @@ def create_preservation_audit(workspace: Path, plan_path: Path) -> dict[str, obj
         "assessments": {
             "copy": {
                 "offline_bundle_generation": "implemented",
+                "triggered_ai_exclusions": {
+                    "explicitly_excluded": len(excluded_triggered_actions),
+                    "reason": exclusion_reason,
+                    "status": (
+                        "audited_explicit_omission" if excluded_triggered_actions else "none"
+                    ),
+                },
                 "fleet_manager_new_site_map_ingestion": "unverified",
                 "dock_export": {
                     "selected_complete": sum(

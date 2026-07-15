@@ -316,6 +316,41 @@ def test_builder_preserves_triggered_ai_inspection_in_bundle(tmp_path) -> None:
     assert report.counts["triggered_actions_cloned"] == 1
     assert any("public Walk export" in warning for warning in report.warnings)
 
+    excluded_plan_path = workspace / "zone-excluded.plan.json"
+    excluded_plan_path.write_text(
+        json.dumps(
+            {
+                "zone_name": "zone-ai-excluded",
+                "core_waypoint_ids": [waypoint_id],
+                "halo_waypoint_ids": [],
+                "clone_halo_actions": False,
+                "excluded_triggered_action_ids": [inspection_id],
+                "triggered_action_exclusion_reason": "confirmed incomplete backup record",
+            }
+        ),
+        encoding="utf-8",
+    )
+    excluded_bundle = tmp_path / "excluded-bundle"
+    excluded_manifest = build_clone(workspace, excluded_plan_path, excluded_bundle)
+    excluded_report = validate_bundle(excluded_bundle, write_report=False)
+
+    assert excluded_manifest["triggered_actions"] == []
+    assert excluded_manifest["counts"]["triggered_actions_explicitly_excluded"] == 1
+    assert excluded_manifest["triggered_actions_excluded"] == [
+        {
+            "source_element_id": inspection_id,
+            "name": "Door Check (AI)",
+            "source_parent_element_id": parent_id,
+            "reason": "confirmed incomplete backup record",
+            "disposition": "not_cloned_explicit_plan_exclusion",
+        }
+    ]
+    assert excluded_report.valid
+    assert excluded_report.counts["triggered_actions_cloned"] == 0
+    assert excluded_report.counts["triggered_actions_explicitly_excluded"] == 1
+    assert not any("public Walk export" in warning for warning in excluded_report.warnings)
+    assert any("explicitly excluded" in warning for warning in excluded_report.warnings)
+
 
 def test_clone_site_element_classifies_daq_mission_id_as_provenance() -> None:
     old_element = SOURCE_ELEMENT_ID

@@ -13,6 +13,10 @@ with prerelease labels while compatibility remains alpha.
 - Apache License 2.0, contribution guidance, and security policy.
 - Same-instance verification checklist for disposable imports.
 - Project motivation, primary user groups, and map-partitioning use cases.
+- Optional unanchored and dependency-free disconnected-component cleanup with plan/audit records.
+- Exact, reason-bearing exclusion for operator-confirmed incomplete or orphaned triggered records.
+- Export-time waypoint recording-session relabeling and archive-name-derived deterministic Walk
+  identities.
 
 ### Changed
 
@@ -21,6 +25,7 @@ with prerelease labels while compatibility remains alpha.
 - Documented a successful UI import for an anonymized ordinary-action zone with Orbit, Spot robot
   software, and tablet software all at version 5.1.8.
 - Replaced deployment-specific documentation and identifiers with synthetic examples.
+- Preserved fail-closed triggered AI behavior while making explicit omissions auditable.
 
 ### Removed
 

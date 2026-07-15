@@ -225,10 +225,43 @@ def validate_bundle(bundle: Path, write_report: bool = True) -> ValidationReport
                         )
         report.counts["triggered_actions_cloned"] = len(triggered_actions)
         report.counts["triggered_action_images_cloned"] = triggered_image_count
+        excluded_triggered_actions = manifest.get("triggered_actions_excluded", [])
+        excluded_source_ids: set[str] = set()
+        for action in excluded_triggered_actions:
+            source_element_id = str(action.get("source_element_id", ""))
+            if not source_element_id:
+                report.error("excluded triggered AI inspection has no source element ID")
+                continue
+            if source_element_id in excluded_source_ids:
+                report.error(f"duplicate excluded triggered AI inspection ID: {source_element_id}")
+            excluded_source_ids.add(source_element_id)
+            if not str(action.get("reason", "")).strip():
+                report.error(
+                    f"excluded triggered AI inspection has no audit reason: {source_element_id}"
+                )
+            if action.get("disposition") != "not_cloned_explicit_plan_exclusion":
+                report.error(
+                    f"excluded triggered AI inspection has invalid disposition: {source_element_id}"
+                )
+        cloned_source_ids = {str(action["source_element_id"]) for action in triggered_actions}
+        overlap = sorted(excluded_source_ids & cloned_source_ids)
+        if overlap:
+            report.error(f"triggered AI inspection is both cloned and excluded: {overlap[0]}")
+        planned_exclusions = set(
+            manifest.get("selection", {}).get("excluded_triggered_action_ids", [])
+        )
+        if excluded_source_ids != planned_exclusions:
+            report.error("excluded triggered AI inspection manifest does not match selection")
+        report.counts["triggered_actions_explicitly_excluded"] = len(excluded_triggered_actions)
         if triggered_actions:
             report.warnings.append(
                 f"{len(triggered_actions)} triggered AI inspection(s) are preserved in the "
                 "bundle, but public Walk export cannot encode their parent trigger linkage"
+            )
+        if excluded_triggered_actions:
+            report.warnings.append(
+                f"{len(excluded_triggered_actions)} triggered AI inspection(s) were explicitly "
+                "excluded by the audited plan"
             )
         if actions and not manifest.get("action_payloads_rewritten", False):
             report.error("manifest does not confirm action payload ID rewriting")

@@ -66,6 +66,7 @@ def export_walk_archive(
     out: Path,
     *,
     name: str | None = None,
+    recording_name: str | None = None,
     template_archive: Path | None = None,
     triggered_ai_mode: str = "block",
 ) -> dict[str, object]:
@@ -98,8 +99,12 @@ def export_walk_archive(
         raise ValueError("clone bundle is invalid: " + "; ".join(bundle_report.errors[:3]))
 
     archive_name = _validate_archive_name(name or str(manifest["clone_name"]))
+    normalized_recording_name = (
+        _validate_recording_name(recording_name) if recording_name is not None else None
+    )
     graph = load_graph(bundle / "graph")
-    walk_id = _walk_id(manifest)
+    recording_session = _override_recording_session_name(graph, normalized_recording_name)
+    walk_id = _walk_id(manifest, archive_name)
     walk = _new_walk(archive_name, walk_id)
     opaque_target_profile = _load_opaque_target_profile(manifest)
 
@@ -188,6 +193,7 @@ def export_walk_archive(
         "root": root,
         "walk_id": walk_id,
         "name": archive_name,
+        "recording_session": recording_session,
         "counts": {
             **archive_report.counts,
             "navigation_only_elements": navigation_only,
@@ -994,12 +1000,33 @@ def _validate_daq_identity(
         report.error(f"DAQ mission_id is missing beside element_id: {element.id}")
 
 
-def _walk_id(manifest: dict[str, object]) -> str:
+def _walk_id(manifest: dict[str, object], archive_name: str) -> str:
     source = manifest.get("source", {})
     site_map = source.get("site_map", {}) if isinstance(source, dict) else {}
     source_map_id = site_map.get("id", "unknown") if isinstance(site_map, dict) else "unknown"
-    clone_name = str(manifest["clone_name"])
-    return str(uuid.uuid5(DEFAULT_NAMESPACE, f"{clone_name}:autowalk:{source_map_id}"))
+    return str(uuid.uuid5(DEFAULT_NAMESPACE, f"{archive_name}:autowalk:{source_map_id}"))
+
+
+def _override_recording_session_name(
+    graph: map_pb2.Graph, recording_name: str | None
+) -> dict[str, object]:
+    source_names = Counter(
+        waypoint.annotations.client_metadata.session_name for waypoint in graph.waypoints
+    )
+    if recording_name is None:
+        return {
+            "mode": "preserved",
+            "source_names": dict(sorted(source_names.items())),
+            "waypoints_updated": 0,
+        }
+    for waypoint in graph.waypoints:
+        waypoint.annotations.client_metadata.session_name = recording_name
+    return {
+        "mode": "overridden",
+        "name": recording_name,
+        "source_names": dict(sorted(source_names.items())),
+        "waypoints_updated": len(graph.waypoints),
+    }
 
 
 def _validate_archive_name(name: str) -> str:
@@ -1013,6 +1040,15 @@ def _validate_archive_name(name: str) -> str:
     normalized = normalized.removesuffix(".walk")
     if not normalized:
         raise ValueError("Walk archive name cannot be empty")
+    return normalized
+
+
+def _validate_recording_name(name: str) -> str:
+    normalized = name.strip()
+    if not normalized:
+        raise ValueError("recording name cannot be empty")
+    if "\0" in normalized:
+        raise ValueError("recording name cannot contain a NUL character")
     return normalized
 
 

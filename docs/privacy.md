@@ -12,6 +12,7 @@ them as private even when the tool itself is open source.
 - DAQ, alignment, and other embedded images;
 - local absolute file paths;
 - timestamps and operational metadata;
+- original waypoint recording-session labels and client metadata;
 - credential or log directories elsewhere in a source backup.
 
 The tool intentionally avoids extracting credential directories. It cannot make the rest of a map
@@ -27,6 +28,7 @@ non-sensitive.
 | clone bundle | Source-to-clone mappings and cloned action images |
 | `.walk.zip` | New map topology, action definitions, and images |
 | screenshots/browser logs | May expose map layout, site names, paths, or IDs |
+| captured CLI output | May expose source session labels, counts, warnings, paths, or IDs |
 
 All of these are excluded from Git by default. Exclusion is not encryption or access control.
 
@@ -40,6 +42,10 @@ All of these are excluded from Git by default. Exclusion is not encryption or ac
 - Do not publish exact production counts, coordinates, timestamps, or UUIDs.
 - Replace local paths with placeholders such as `/path/to/backup.tar`.
 - Review `git status` and run `scripts/check_release_hygiene.py` before every public push.
+
+`--recording-name` changes only the exported session label. The export summary intentionally
+reports the replaced source-label distribution for private auditability; redact that output before
+sharing logs. The tool does not create or control a fleet-manager recording UUID.
 
 ## No telemetry or upload
 

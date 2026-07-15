@@ -66,6 +66,27 @@
               <small>Off by default to prevent duplicate inspections.</small>
             </span>
           </label>
+
+          <div class="cleanup-heading">Selection cleanup</div>
+          <label class="checkbox-field" for="exclude-unanchored-waypoints">
+            <input id="exclude-unanchored-waypoints" type="checkbox" checked>
+            <span>
+              <strong>Exclude unanchored waypoints</strong>
+              <small>Ignore local-frame remnants that cannot reach a layout control point.</small>
+            </span>
+          </label>
+          <label class="checkbox-field" for="exclude-dependency-free-components">
+            <input id="exclude-dependency-free-components" type="checkbox">
+            <span>
+              <strong>Exclude empty disconnected remnants</strong>
+              <small>Remove smaller components only when they have no actions, docks, or pano state.</small>
+            </span>
+          </label>
+          <div class="cleanup-preview" aria-live="polite">
+            <span>Unanchored excluded <strong id="cleanup-unanchored">0</strong></span>
+            <span>Empty remnants <strong id="cleanup-remnants">0</strong></span>
+            <span>Final components <strong id="cleanup-components">0</strong></span>
+          </div>
         </section>
 
         <section class="panel-section stats-section" aria-live="polite">

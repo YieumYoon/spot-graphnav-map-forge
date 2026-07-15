@@ -66,9 +66,13 @@ review the [compatibility matrix](docs/compatibility.md) before using it.
 - reconstructs the final edited `map_pb2.Graph` from Site Map waypoint and edge records;
 - retains active manual edges, loop closures, graph annotations, and referenced snapshots;
 - selects a zone with a polygon and an optional graph-neighbor halo;
+- can exclude unanchored remnants and dependency-free disconnected components with an auditable
+  plan;
 - assigns reproducible UUIDv5 identities to cloned map objects and actions;
 - preserves ordinary action payloads, waypoint-relative capture targets, and embedded images;
 - clones complete dock definitions when every referenced waypoint is selected;
+- can replace exported waypoint recording-session labels without changing geometry or capture
+  timestamps;
 - audits cut edges and unsupported dependencies before export;
 - validates both the offline clone bundle and the generated `.walk.zip`;
 - provides a local browser UI for drawing polygons.
@@ -77,6 +81,7 @@ review the [compatibility matrix](docs/compatibility.md) before using it.
 
 - mutate, trim, or delete the source Site Map;
 - preserve source waypoint, action, mission, or Site Map identities;
+- assign or migrate a fleet-manager recording UUID;
 - migrate existing inspection results, anomalies, or capture history;
 - migrate Site View panorama history;
 - clone existing mission ordering or schedules;
@@ -159,6 +164,23 @@ uv run spot-map-forge export-walk output/zone-a \
 uv run spot-map-forge validate-walk output/zone-a.walk.zip
 ```
 
+To give an exported copy a fresh Walk identity and replace the recording-session label retained
+on every waypoint, supply both names explicitly. `--name` sets the archive, map, mission, and group
+labels and drives the deterministic Walk UUID. `--recording-name` replaces only
+`Waypoint.annotations.client_metadata.session_name`; waypoint geometry, timestamps, IDs, and
+client identity remain unchanged:
+
+```bash
+uv run spot-map-forge export-walk output/zone-a \
+  --out output/zone-a-clean-v2.walk.zip \
+  --name zone-a-clean-v2 \
+  --recording-name zone-a-clean-v2
+```
+
+This does not create or choose a fleet-manager recording UUID. Any server-side recording identity
+is assigned during manual import. The export summary lists the source session-label distribution
+for auditability, so treat captured CLI output as private operational data.
+
 Upload remains a deliberate manual step. Follow the
 [same-instance verification checklist](docs/import-poc.md) with a disposable clone name.
 
@@ -175,6 +197,40 @@ one-hop halo:  H -- C -- C -- C -- H
 Actions on halo waypoints are excluded by default to avoid duplicating inspections across adjacent
 zone maps. Use `--clone-halo-actions` only when those boundary actions intentionally belong to the
 new zone.
+
+The editor can exclude unanchored local-frame remnants before computing the halo, then remove
+smaller disconnected components that contain no actions, docks, or panorama state. The equivalent
+CLI flags are:
+
+```bash
+uv run spot-map-forge plan workspace/example-map \
+  --polygon examples/zone.example.json \
+  --zone-name zone-a \
+  --exclude-unanchored-waypoints \
+  --exclude-dependency-free-components \
+  --out workspace/example-map/zone-a.plan.json
+```
+
+Unanchored cleanup is enabled by default in the editor but remains explicit in saved plans. Empty
+component cleanup is opt-in. Exact excluded IDs, component sizes, and protected dependency-bearing
+components are recorded in the plan, audit, and clone manifest.
+
+Triggered AI SiteElements remain fail-closed by default. If a backup contains a confirmed
+incomplete or orphaned triggered record, exclude only that exact ID and record the evidence in the
+plan:
+
+```bash
+uv run spot-map-forge plan workspace/example-map \
+  --polygon examples/zone.example.json \
+  --zone-name zone-a \
+  --exclude-triggered-action '<site-element-id>' \
+  --triggered-action-exclusion-reason 'confirmed incomplete backup record' \
+  --out workspace/example-map/zone-a.plan.json
+```
+
+Unknown IDs, duplicate IDs, exclusions outside the selected action set, and exclusions without a
+reason are rejected. The omission is retained in the audit and clone manifest; the source backup
+is never changed.
 
 ## Optional tablet metadata template
 
