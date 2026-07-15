@@ -59,6 +59,10 @@ def test_audit_reports_cross_partition_walk_and_missing_capture_history(tmp_path
         ],
         "pano_states": [{"waypoint_id": "wp-0"}],
         "map_layout": {"control_points": [{"waypoint_id": "wp-0"}]},
+        "edge_transport": {
+            "policy": "orbit_site_edge_field_3_selection_only",
+            "selection_only_edges": [{"from": "wp-0", "to": "wp-1"}],
+        },
     }
     (workspace / "workspace.json").write_text(json.dumps(metadata), encoding="utf-8")
     plan = {
@@ -66,6 +70,16 @@ def test_audit_reports_cross_partition_walk_and_missing_capture_history(tmp_path
         "halo_waypoint_ids": [],
         "excluded_triggered_action_ids": ["triggered-0"],
         "triggered_action_exclusion_reason": "confirmed incomplete backup record",
+        "edge_transport": {
+            "include_in_walk": False,
+            "selection_only_edges": [
+                {
+                    "from": "wp-0",
+                    "to": "wp-1",
+                    "disposition": "excluded_from_bundle_and_walk",
+                }
+            ],
+        },
     }
     plan_path = workspace / "zone.plan.json"
     plan_path.write_text(json.dumps(plan), encoding="utf-8")
@@ -107,6 +121,9 @@ def test_audit_reports_cross_partition_walk_and_missing_capture_history(tmp_path
         "selection_boundary_skipped": 1,
     }
     assert report["assessments"]["copy"]["fleet_manager_new_site_map_ingestion"] == "unverified"
+    assert report["topology"]["field_3_edges_selected"] == 1
+    assert report["topology"]["field_3_edges_excluded_from_walk"] == 1
+    assert not report["assessments"]["copy"]["edge_transport"]["include_in_walk"]
     assert (
         report["assessments"]["copy"]["historical_site_view_capture_migration"]
         == "not_possible_from_this_backup"

@@ -11,7 +11,11 @@ from bosdyn.api.graph_nav import map_pb2
 from .archive import BackupArchive
 from .backup import SITE_WALK_PREFIX
 from .geometry import connected_components, load_graph
-from .planner import edge_source_counts, resolve_triggered_action_exclusions
+from .planner import (
+    edge_source_counts,
+    resolve_triggered_action_exclusions,
+    selection_only_edge_keys,
+)
 
 
 def create_preservation_audit(workspace: Path, plan_path: Path) -> dict[str, object]:
@@ -25,6 +29,10 @@ def create_preservation_audit(workspace: Path, plan_path: Path) -> dict[str, obj
     core = set(plan["core_waypoint_ids"])
     halo = set(plan["halo_waypoint_ids"])
     selected = core | halo
+    selection_only_keys = selection_only_edge_keys(metadata)
+    include_selection_only_edges = bool(
+        plan.get("edge_transport", {}).get("include_in_walk", False)
+    )
     unknown = selected - all_waypoints
     if unknown:
         raise ValueError(f"plan contains waypoint not present in workspace: {sorted(unknown)[0]}")
@@ -42,6 +50,20 @@ def create_preservation_audit(workspace: Path, plan_path: Path) -> dict[str, obj
             core_edges.append(edge)
         else:
             remainder_edges.append(edge)
+
+    selected_selection_only_edges = [
+        edge
+        for edge in graph.edges
+        if (edge.id.from_waypoint, edge.id.to_waypoint) in selection_only_keys
+        and edge.id.from_waypoint in selected
+        and edge.id.to_waypoint in selected
+    ]
+    walk_excluded_keys = set() if include_selection_only_edges else selection_only_keys
+    walk_components = connected_components(
+        graph,
+        selected,
+        excluded_edge_keys=walk_excluded_keys,
+    )
 
     actions = metadata.get("actions", [])
     triggered_actions = metadata.get("triggered_actions", [])
@@ -140,6 +162,8 @@ def create_preservation_audit(workspace: Path, plan_path: Path) -> dict[str, obj
             "remainder_waypoints": len(remainder),
             "core_components": len(connected_components(graph, core)),
             "remainder_components": len(connected_components(graph, remainder)),
+            "walk_components": len(walk_components),
+            "walk_largest_component": len(walk_components[0]) if walk_components else 0,
             "cleanup": plan.get("selection_cleanup", {}),
         },
         "topology": {
@@ -147,6 +171,13 @@ def create_preservation_audit(workspace: Path, plan_path: Path) -> dict[str, obj
             "remainder_internal_edges": len(remainder_edges),
             "boundary_edges": len(boundary_edges),
             "boundary_edge_source_counts": edge_source_counts(boundary_edges),
+            "field_3_edges_selected": len(selected_selection_only_edges),
+            "field_3_edges_included_in_walk": (
+                len(selected_selection_only_edges) if include_selection_only_edges else 0
+            ),
+            "field_3_edges_excluded_from_walk": (
+                0 if include_selection_only_edges else len(selected_selection_only_edges)
+            ),
         },
         "dependencies": {
             "actions": _zone_counts(actions, core, halo, remainder),
@@ -204,6 +235,15 @@ def create_preservation_audit(workspace: Path, plan_path: Path) -> dict[str, obj
         "assessments": {
             "copy": {
                 "offline_bundle_generation": "implemented",
+                "edge_transport": {
+                    "policy": "explicit_operator_choice",
+                    "field_3_edges_selected": len(selected_selection_only_edges),
+                    "include_in_walk": include_selection_only_edges,
+                    "post_import_action": (
+                        "verify each listed edge in Orbit and reapply environment/travel "
+                        "settings; recreate the edge first when excluded"
+                    ),
+                },
                 "triggered_ai_exclusions": {
                     "explicitly_excluded": len(excluded_triggered_actions),
                     "reason": exclusion_reason,

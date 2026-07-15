@@ -28,6 +28,7 @@ gate. Always run `inspect`, `audit`, `validate`, and `validate-walk` before a di
 | Backup inventory and Site Map listing | Supported | Offline parsing |
 | Final Site Map waypoint reconstruction | Supported | Offline structural and semantic checks |
 | Active/manual/loop-closure edges | Supported | Final site-level edge records and validation |
+| Orbit field-3 edge UI settings | Experimental | Explicit include/exclude choice; verify and reapply environment/travel settings in Orbit after import |
 | Polygon and halo selection | Supported | Deterministic offline planning |
 | Unanchored/remnant cleanup | Supported | Exact exclusions and protected dependencies recorded in plan/audit |
 | Waypoint and snapshot cloning | Supported | Closed references and source-ID leak checks |
@@ -55,6 +56,7 @@ The tool stops rather than claiming compatibility when:
 - identity rewriting leaves a source token in a cloned payload;
 - dock references cross the selection boundary;
 - opaque Target defaults conflict;
+- a workspace field-3 edge policy does not match the saved plan;
 - an archive or output path violates structural expectations.
 
 The only triggered-record exception is an exact, reason-bearing plan exclusion for an operator-

@@ -65,14 +65,16 @@ Import through the supported product UI using a disposable name. Pass the UI gat
 1. a new Site Map is created and the source map remains unchanged;
 2. the visible topology matches the offline clone, including representative manual and loop
    closure edges;
-3. selected ordinary actions appear at the expected waypoint-relative locations;
-4. action type, parameters, and display names match the source definitions;
-5. DAQ and alignment images render in their correct action slots;
-6. no action from outside the core selection appears unless halo actions were explicitly enabled;
-7. every boundary-cut edge or dock reported by the audit is absent from the imported map.
-8. the visible Walk and recording-session labels use the disposable name rather than a retained
+3. every field-3 edge listed by the audit matches the chosen include/exclude mode, and its
+   environment and **Allow travel along this edge** settings have been verified and reapplied;
+4. selected ordinary actions appear at the expected waypoint-relative locations;
+5. action type, parameters, and display names match the source definitions;
+6. DAQ and alignment images render in their correct action slots;
+7. no action from outside the core selection appears unless halo actions were explicitly enabled;
+8. every boundary-cut edge or dock reported by the audit is absent from the imported map.
+9. the visible Walk and recording-session labels use the disposable name rather than a retained
    source session label;
-9. the product treats the import as a new object where a server-side recording identity is shown.
+10. the product treats the import as a new object where a server-side recording identity is shown.
 
 The offline exporter controls the public Walk ID and waypoint session label, not the product's
 recording UUID. Record only whether a new identity was assigned; do not copy that UUID into public

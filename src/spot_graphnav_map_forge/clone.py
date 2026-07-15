@@ -17,9 +17,12 @@ def clone_subgraph(
     source: map_pb2.Graph,
     selected_waypoint_ids: set[str],
     clone_name: str,
+    *,
+    excluded_edge_keys: set[tuple[str, str]] | None = None,
 ) -> CloneResult:
     remapper = IdRemapper(clone_name=clone_name)
     clone = map_pb2.Graph()
+    excluded_edges = excluded_edge_keys or set()
 
     for waypoint in source.waypoints:
         if waypoint.id not in selected_waypoint_ids:
@@ -35,6 +38,8 @@ def clone_subgraph(
         source_id = edge.id.from_waypoint
         target_id = edge.id.to_waypoint
         if source_id not in selected_waypoint_ids or target_id not in selected_waypoint_ids:
+            continue
+        if (source_id, target_id) in excluded_edges:
             continue
         new_edge = clone.edges.add()
         new_edge.CopyFrom(edge)

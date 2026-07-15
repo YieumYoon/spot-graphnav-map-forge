@@ -25,6 +25,10 @@ def _workspace(tmp_path):
         "site_map": {"id": "map-1", "name": "Test Map", "recording_ids": []},
         "counts": {"waypoints": 3, "edges": 2, "actions": 2},
         "snapshot_sources": {"waypoint": {}, "edge": {}},
+        "edge_transport": {
+            "policy": "orbit_site_edge_field_3_selection_only",
+            "selection_only_edges": [{"from": "wp-1", "to": "wp-2"}],
+        },
         "actions": [
             {
                 "id": "action-0",
@@ -117,6 +121,26 @@ def test_create_plan_and_workspace_payload(tmp_path) -> None:
     assert plan["counts"]["core_actions"] == 1
     assert plan["counts"]["halo_actions"] == 1
     assert plan["edge_source_counts"]["EDGE_SOURCE_USER_REQUEST"] == 1
+    assert plan["counts"]["selected_connectivity_edges"] == 2
+    assert plan["counts"]["selected_edges"] == 1
+    assert plan["counts"]["selection_only_edges_excluded"] == 1
+    assert plan["counts"]["components"] == 2
+    assert not plan["edge_transport"]["include_in_walk"]
+
+    included_plan = create_plan(
+        workspace,
+        polygon,
+        "zone-including-field-3",
+        halo_hops=1,
+        include_selection_only_edges=True,
+    )
+    assert included_plan["counts"]["selected_edges"] == 2
+    assert included_plan["counts"]["selection_only_edges_included"] == 1
+    assert included_plan["counts"]["selection_only_edges_excluded"] == 0
+    assert included_plan["counts"]["components"] == 1
+    assert included_plan["edge_transport"]["selection_only_edges"][0]["disposition"] == (
+        "included_in_walk_public_annotations_only"
+    )
 
     exclusion_plan = create_plan(
         workspace,
@@ -150,6 +174,7 @@ def test_create_plan_and_workspace_payload(tmp_path) -> None:
     assert payload["counts"]["components"] == 1
     assert payload["counts"]["unanchored_waypoints"] == 0
     assert payload["waypoints"][2]["actions"] == 1
+    assert payload["edges"][1]["transport"] == "selection_only"
 
 
 def test_save_plan_requires_explicit_overwrite(tmp_path) -> None:

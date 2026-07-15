@@ -14,6 +14,7 @@ const elements = {
   cloneHaloActions: $("#clone-halo-actions"),
   excludeUnanchored: $("#exclude-unanchored-waypoints"),
   excludeDependencyFree: $("#exclude-dependency-free-components"),
+  includeSelectionOnly: $("#include-selection-only-edges"),
   showUnanchored: $("#show-unanchored"),
   save: $("#save-plan"),
   saveHint: $("#save-hint"),
@@ -30,6 +31,8 @@ const elements = {
     core: $("#stat-core"),
     halo: $("#stat-halo"),
     edges: $("#stat-edges"),
+    selectionOnly: $("#stat-selection-only"),
+    walkComponents: $("#stat-walk-components"),
     actions: $("#stat-actions"),
     manual: $("#stat-manual"),
     fiducial: $("#stat-fiducial"),
@@ -45,6 +48,7 @@ const state = {
   waypointById: new Map(),
   actionsByWaypoint: new Map(),
   adjacency: new Map(),
+  walkAdjacency: new Map(),
   selectionDependencyIds: new Set(),
   polygon: [],
   core: new Set(),
@@ -159,7 +163,10 @@ function drawGrid() {
   context.stroke();
 }
 
-function edgeStyle(source, selected) {
+function edgeStyle(source, selected, transport) {
+  if (transport === "selection_only") {
+    return { color: css("--amber"), width: selected ? 2.4 : 1.4, dash: [7, 4] };
+  }
   if (source === "EDGE_SOURCE_USER_REQUEST") {
     return { color: css("--primary"), width: selected ? 2.2 : 1.35, dash: [] };
   }
@@ -184,13 +191,15 @@ function drawEdges() {
     const selected =
       (state.core.has(edge.from) || state.halo.has(edge.from)) &&
       (state.core.has(edge.to) || state.halo.has(edge.to));
-    const key = `${edge.source}:${selected ? "selected" : "base"}`;
-    if (!groups.has(key)) groups.set(key, { source: edge.source, selected, edges: [] });
+    const key = `${edge.transport}:${edge.source}:${selected ? "selected" : "base"}`;
+    if (!groups.has(key)) {
+      groups.set(key, { source: edge.source, transport: edge.transport, selected, edges: [] });
+    }
     groups.get(key).edges.push([from, to]);
   }
   const ordered = [...groups.values()].sort((a, b) => Number(a.selected) - Number(b.selected));
   for (const group of ordered) {
-    const style = edgeStyle(group.source, group.selected);
+    const style = edgeStyle(group.source, group.selected, group.transport);
     context.globalAlpha = group.selected ? 0.95 : 0.35;
     context.strokeStyle = style.color;
     context.lineWidth = style.width;
@@ -311,7 +320,7 @@ function computeSelection() {
   state.core.clear();
   state.halo.clear();
   if (!state.data || state.polygon.length < 3) {
-    updateStats([], 0, { unanchored: 0, remnants: 0, components: 0 });
+    updateStats([], 0, 0, 0, { unanchored: 0, remnants: 0, components: 0 });
     requestRender();
     return;
   }
@@ -359,14 +368,22 @@ function computeSelection() {
     selected = new Set([...state.core, ...state.halo]);
   }
 
-  const components = selectedComponents(selected);
+  const components = selectedComponents(selected, state.adjacency);
   const selectedEdges = state.data.edges.filter(
     (edge) => selected.has(edge.from) && selected.has(edge.to),
+  );
+  const selectionOnlyEdges = selectedEdges.filter((edge) => edge.transport === "selection_only");
+  const walkEdges = elements.includeSelectionOnly.checked
+    ? selectedEdges
+    : selectedEdges.filter((edge) => edge.transport !== "selection_only");
+  const walkComponents = selectedComponents(
+    selected,
+    elements.includeSelectionOnly.checked ? state.adjacency : state.walkAdjacency,
   );
   const actionIds = elements.cloneHaloActions.checked ? selected : state.core;
   let actionCount = 0;
   for (const id of actionIds) actionCount += state.waypointById.get(id)?.actions || 0;
-  updateStats(selectedEdges, actionCount, {
+  updateStats(walkEdges, selectionOnlyEdges.length, walkComponents.length, actionCount, {
     unanchored: unanchoredExcluded,
     remnants: remnantWaypoints,
     components: components.length,
@@ -391,7 +408,7 @@ function expandHalo(core, hops) {
   return distances;
 }
 
-function selectedComponents(selected) {
+function selectedComponents(selected, adjacency = state.adjacency) {
   const remaining = new Set(selected);
   const components = [];
   while (remaining.size) {
@@ -400,7 +417,7 @@ function selectedComponents(selected) {
     const queue = [root];
     remaining.delete(root);
     for (let cursor = 0; cursor < queue.length; cursor += 1) {
-      for (const neighbor of state.adjacency.get(queue[cursor]) || []) {
+      for (const neighbor of adjacency.get(queue[cursor]) || []) {
         if (!remaining.has(neighbor)) continue;
         remaining.delete(neighbor);
         component.add(neighbor);
@@ -412,12 +429,14 @@ function selectedComponents(selected) {
   return components.sort((left, right) => right.size - left.size);
 }
 
-function updateStats(selectedEdges, actionCount, cleanup) {
+function updateStats(selectedEdges, selectionOnlyCount, walkComponentCount, actionCount, cleanup) {
   const sources = new Map();
   for (const edge of selectedEdges) sources.set(edge.source, (sources.get(edge.source) || 0) + 1);
   elements.stats.core.textContent = state.core.size.toLocaleString();
   elements.stats.halo.textContent = state.halo.size.toLocaleString();
   elements.stats.edges.textContent = selectedEdges.length.toLocaleString();
+  elements.stats.selectionOnly.textContent = selectionOnlyCount.toLocaleString();
+  elements.stats.walkComponents.textContent = walkComponentCount.toLocaleString();
   elements.stats.actions.textContent = actionCount.toLocaleString();
   elements.stats.manual.textContent = (sources.get("EDGE_SOURCE_USER_REQUEST") || 0).toLocaleString();
   elements.stats.fiducial.textContent = (
@@ -441,7 +460,10 @@ function updateSaveState() {
   elements.save.disabled = !(hasName && hasPolygon);
   if (!hasPolygon) elements.saveHint.textContent = "Add at least three vertices around one waypoint.";
   else if (!hasName) elements.saveHint.textContent = "Enter a zone name to save this plan.";
-  else elements.saveHint.textContent = `${state.core.size} core waypoint IDs will be written offline.`;
+  else {
+    const mode = elements.includeSelectionOnly.checked ? "included; reapply settings" : "excluded";
+    elements.saveHint.textContent = `${state.core.size} core waypoints · field 3 edges ${mode}.`;
+  }
 }
 
 function buildIndexes() {
@@ -454,12 +476,19 @@ function buildIndexes() {
     state.actionsByWaypoint.get(action.waypoint_id).push(action);
   }
   state.adjacency = new Map();
+  state.walkAdjacency = new Map();
   state.selectionDependencyIds = new Set(state.data.selection_dependency_waypoint_ids || []);
   for (const edge of state.data.edges) {
     if (!state.adjacency.has(edge.from)) state.adjacency.set(edge.from, new Set());
     if (!state.adjacency.has(edge.to)) state.adjacency.set(edge.to, new Set());
     state.adjacency.get(edge.from).add(edge.to);
     state.adjacency.get(edge.to).add(edge.from);
+    if (edge.transport !== "selection_only") {
+      if (!state.walkAdjacency.has(edge.from)) state.walkAdjacency.set(edge.from, new Set());
+      if (!state.walkAdjacency.has(edge.to)) state.walkAdjacency.set(edge.to, new Set());
+      state.walkAdjacency.get(edge.from).add(edge.to);
+      state.walkAdjacency.get(edge.to).add(edge.from);
+    }
   }
 }
 
@@ -621,6 +650,7 @@ async function savePlan() {
     clone_halo_actions: elements.cloneHaloActions.checked,
     exclude_unanchored_waypoints: elements.excludeUnanchored.checked,
     exclude_dependency_free_components: elements.excludeDependencyFree.checked,
+    include_selection_only_edges: elements.includeSelectionOnly.checked,
     overwrite: state.overwritePending,
   };
   try {
@@ -736,6 +766,7 @@ function bindEvents() {
   elements.cloneHaloActions.addEventListener("change", computeSelection);
   elements.excludeUnanchored.addEventListener("change", computeSelection);
   elements.excludeDependencyFree.addEventListener("change", computeSelection);
+  elements.includeSelectionOnly.addEventListener("change", computeSelection);
   elements.showUnanchored.addEventListener("change", () => {
     fitMap();
     computeSelection();
@@ -765,6 +796,7 @@ async function initialize() {
     elements.mapName.textContent = `${state.data.site_map.name} · ${state.data.counts.waypoints.toLocaleString()} waypoints`;
     elements.mapSummary.textContent =
       `${state.data.counts.edges.toLocaleString()} edges · ` +
+      `${(state.data.counts.selection_only_edges || 0).toLocaleString()} field 3 · ` +
       `${(
         state.data.counts.actions
       ).toLocaleString()} actions · ` +

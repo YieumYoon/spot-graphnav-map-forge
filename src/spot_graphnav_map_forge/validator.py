@@ -36,7 +36,8 @@ def validate_bundle(bundle: Path, write_report: bool = True) -> ValidationReport
         edge_keys.append((source, target))
         if source not in waypoint_set or target not in waypoint_set:
             report.error(f"edge endpoint missing: {source} -> {target}")
-    if len(edge_keys) != len(set(edge_keys)):
+    edge_key_set = set(edge_keys)
+    if len(edge_keys) != len(edge_key_set):
         report.error("duplicate directed edge IDs")
 
     for waypoint in graph.waypoints:
@@ -78,6 +79,32 @@ def validate_bundle(bundle: Path, write_report: bool = True) -> ValidationReport
         report.error("clone_manifest.json is missing")
     else:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        edge_transport = manifest.get("edge_transport", {})
+        included_field_3_edges = edge_transport.get("selection_only_edges_included", [])
+        excluded_field_3_edges = edge_transport.get("selection_only_edges_excluded", [])
+        for row in included_field_3_edges:
+            key = (str(row.get("new_from", "")), str(row.get("new_to", "")))
+            if key not in edge_key_set:
+                report.error(f"included field-3 edge missing from cloned graph: {key}")
+        for row in excluded_field_3_edges:
+            key = (str(row.get("new_from", "")), str(row.get("new_to", "")))
+            if key in edge_key_set:
+                report.error(f"excluded field-3 edge present in cloned graph: {key}")
+        if manifest.get("counts", {}).get("selection_only_edges_included", 0) != len(
+            included_field_3_edges
+        ):
+            report.error("field-3 included-edge count does not match manifest records")
+        if manifest.get("counts", {}).get("selection_only_edges_excluded", 0) != len(
+            excluded_field_3_edges
+        ):
+            report.error("field-3 excluded-edge count does not match manifest records")
+        field_3_count = len(included_field_3_edges) + len(excluded_field_3_edges)
+        if field_3_count:
+            disposition = "included" if included_field_3_edges else "excluded"
+            report.warnings.append(
+                f"{field_3_count} Orbit field-3 edge(s) were {disposition}; verify and "
+                "reapply their environment/travel settings in Orbit after import"
+            )
         actions = manifest.get("actions", [])
         action_image_count = 0
         external_dependency_actions = 0

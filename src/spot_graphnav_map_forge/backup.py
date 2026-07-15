@@ -77,11 +77,18 @@ def resolve_site_map(archive: BackupArchive, query: str) -> SiteMapRecord:
 
 def reconstruct_final_graph(
     archive: BackupArchive, site_map: SiteMapRecord
-) -> tuple[map_pb2.Graph, dict[str, str], dict[str, str]]:
+) -> tuple[
+    map_pb2.Graph,
+    dict[str, str],
+    dict[str, str],
+    tuple[tuple[str, str], ...],
+]:
     """Reconstruct the final graph, preferring site-level edited objects.
 
     Returns the graph plus snapshot-id-to-tar-path indexes for selected waypoint and edge
-    snapshots. Snapshot payloads are not read here, keeping preparation memory bounded.
+    snapshots, followed by the directed edge keys that are retained only for workspace selection
+    and coordinate propagation. Snapshot payloads are not read here, keeping preparation memory
+    bounded.
     """
     wanted = set(site_map.waypoint_ids)
     raw_waypoints: dict[str, Any] = {}
@@ -117,6 +124,7 @@ def reconstruct_final_graph(
             f"{len(missing)} site-map waypoints have no site/raw record; first: {missing[0]}"
         )
 
+    selection_only_edges: list[tuple[str, str]] = []
     for path in archive.names(SITE_EDGE_PREFIX):
         fields = decode_fields(archive.read(path))
         if _scalar_id(fields, 1, "") != site_map.id:
@@ -130,6 +138,8 @@ def reconstruct_final_graph(
         edge.ParseFromString(embedded[0])
         _normalize_edge_rotation(edge)
         graph.edges.add().CopyFrom(edge)
+        if _site_edge_is_selection_only(fields):
+            selection_only_edges.append((edge.id.from_waypoint, edge.id.to_waypoint))
 
     waypoint_snapshots = _snapshot_path_index(archive, WAYPOINT_SNAPSHOT_PREFIX)
     edge_snapshots = _snapshot_path_index(archive, EDGE_SNAPSHOT_PREFIX)
@@ -143,18 +153,31 @@ def reconstruct_final_graph(
         for edge in graph.edges
         if edge.snapshot_id in edge_snapshots
     }
-    return graph, selected_waypoint_snapshots, selected_edge_snapshots
+    return (
+        graph,
+        selected_waypoint_snapshots,
+        selected_edge_snapshots,
+        tuple(sorted(selection_only_edges)),
+    )
 
 
 def _site_edge_is_active(fields: Any) -> bool:
-    """Return whether an observed SiteEdge wrapper belongs to the final edited graph.
+    """Return whether a SiteEdge wrapper may participate in workspace connectivity.
 
     The wrapper schema is proprietary, so the flag names are intentionally not guessed. In the
-    observed Orbit 5.1.8 archive format, wrappers with a truthy field 3 or 4 are absent from the
-    same-version exported final Walk graph, while wrappers with neither flag reproduce that
-    graph's edge-key set exactly.
+    observed Orbit 5.1.8 archive format, field 3 appears on edited edges whose public GraphNav
+    annotations still carry the selected environment and traversal settings. Public Walk import
+    does not reliably reconstruct their private SiteEdge state, so they remain available for
+    offline selection and coordinate propagation and require an explicit include/exclude transport
+    choice. Field 4 marks wrappers that Orbit no longer presents as graph edges, including wrappers
+    that also have field 3, and those wrappers are omitted entirely.
     """
-    return not any(integer_values(fields, 3)) and not any(integer_values(fields, 4))
+    return not any(integer_values(fields, 4))
+
+
+def _site_edge_is_selection_only(fields: Any) -> bool:
+    """Return whether an active wrapper needs an explicit public-Walk transport choice."""
+    return _site_edge_is_active(fields) and any(integer_values(fields, 3))
 
 
 def _normalize_edge_rotation(edge: map_pb2.Edge) -> None:

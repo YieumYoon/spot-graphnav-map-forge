@@ -192,20 +192,23 @@ def test_list_docks_parses_public_target_and_deduplicates_revisions(tmp_path) ->
     assert len(docks[0].target_fingerprint) == 64
 
 
-def test_reconstruct_final_graph_excludes_suppressed_site_edges(tmp_path) -> None:
+def test_reconstruct_final_graph_retains_edited_edges_and_excludes_tombstones(tmp_path) -> None:
     map_id = "site-map-1"
-    waypoint_ids = ("wp-1", "wp-2", "wp-3")
+    waypoint_ids = ("wp-1", "wp-2", "wp-3", "wp-4")
     metadata = _bytes_field(1, map_id.encode()) + _bytes_field(2, b"Test Map")
     site_map_payload = _bytes_field(1, metadata) + b"".join(
         _bytes_field(4, waypoint_id.encode()) for waypoint_id in waypoint_ids
     )
 
-    def edge_payload(source: str, target: str, *, flag: int | None = None) -> bytes:
+    def edge_payload(source: str, target: str, *, flags: tuple[int, ...] = ()) -> bytes:
         edge = map_pb2.Edge()
         edge.id.from_waypoint = source
         edge.id.to_waypoint = target
+        if flags == (3,):
+            edge.annotations.disable_directed_exploration = True
+            edge.annotations.disable_alternate_route_finding = True
         payload = _bytes_field(1, map_id.encode()) + _bytes_field(2, edge.SerializeToString())
-        if flag is not None:
+        for flag in flags:
             payload += _integer_field(flag, 1)
         return payload
 
@@ -222,8 +225,12 @@ def test_reconstruct_final_graph_excludes_suppressed_site_edges(tmp_path) -> Non
         records.extend(
             (
                 ("graph_nav/site_edges/active", edge_payload("wp-1", "wp-2")),
-                ("graph_nav/site_edges/flag-3", edge_payload("wp-2", "wp-3", flag=3)),
-                ("graph_nav/site_edges/flag-4", edge_payload("wp-1", "wp-3", flag=4)),
+                ("graph_nav/site_edges/edited", edge_payload("wp-2", "wp-3", flags=(3,))),
+                ("graph_nav/site_edges/tombstone", edge_payload("wp-1", "wp-3", flags=(4,))),
+                (
+                    "graph_nav/site_edges/edited-tombstone",
+                    edge_payload("wp-3", "wp-4", flags=(3, 4)),
+                ),
             )
         )
         for name, payload in records:
@@ -233,12 +240,17 @@ def test_reconstruct_final_graph_excludes_suppressed_site_edges(tmp_path) -> Non
 
     with BackupArchive(backup) as archive:
         site_map = list_site_maps(archive)[0]
-        graph, _, _ = reconstruct_final_graph(archive, site_map)
+        graph, _, _, selection_only_edges = reconstruct_final_graph(archive, site_map)
 
     assert [waypoint.id for waypoint in graph.waypoints] == list(waypoint_ids)
     assert [(edge.id.from_waypoint, edge.id.to_waypoint) for edge in graph.edges] == [
-        ("wp-1", "wp-2")
+        ("wp-1", "wp-2"),
+        ("wp-2", "wp-3"),
     ]
+    edited = graph.edges[1]
+    assert edited.annotations.disable_directed_exploration
+    assert edited.annotations.disable_alternate_route_finding
+    assert selection_only_edges == (("wp-2", "wp-3"),)
 
 
 def test_reconstruct_final_graph_normalizes_site_edge_rotation(tmp_path) -> None:
@@ -270,7 +282,7 @@ def test_reconstruct_final_graph_normalizes_site_edge_rotation(tmp_path) -> None
             archive.addfile(info, io.BytesIO(payload))
 
     with BackupArchive(backup) as archive:
-        graph, _, _ = reconstruct_final_graph(archive, list_site_maps(archive)[0])
+        graph, _, _, _ = reconstruct_final_graph(archive, list_site_maps(archive)[0])
 
     normalized = graph.edges[0].from_tform_to.rotation
     norm = math.sqrt(normalized.x**2 + normalized.y**2 + normalized.z**2 + normalized.w**2)

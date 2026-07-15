@@ -27,6 +27,7 @@ def create_plan(
     triggered_action_exclusion_reason: str | None = None,
     exclude_unanchored_waypoints: bool = False,
     exclude_dependency_free_components: bool = False,
+    include_selection_only_edges: bool = False,
 ) -> dict[str, object]:
     workspace = workspace.expanduser().resolve()
     graph = load_graph(workspace / "graph")
@@ -40,6 +41,7 @@ def create_plan(
         raise ValueError("polygon selected no waypoints")
     metadata = json.loads((workspace / "workspace.json").read_text(encoding="utf-8"))
     actions = metadata["actions"]
+    selection_only_keys = selection_only_edge_keys(metadata)
     baseline_halo = connectivity_halo(graph, raw_core, halo_hops)
     baseline_selected = raw_core | baseline_halo
     unanchored_ids = {
@@ -84,7 +86,13 @@ def create_plan(
     core -= excluded_component_ids
     halo -= excluded_component_ids
     selected = core | halo
-    components = connected_components(graph, selected)
+    selection_components = connected_components(graph, selected)
+    excluded_walk_edge_keys = set() if include_selection_only_edges else selection_only_keys
+    walk_components = connected_components(
+        graph,
+        selected,
+        excluded_edge_keys=excluded_walk_edge_keys,
+    )
     source_counts = dict(
         sorted(Counter(coordinates[waypoint_id].source for waypoint_id in selected).items())
     )
@@ -105,14 +113,33 @@ def create_plan(
         triggered_action_exclusion_reason,
         eligible_parent_ids=eligible_parent_ids,
     )
-    selected_edges = [
+    selected_connectivity_edges = [
         edge
         for edge in graph.edges
         if edge.id.from_waypoint in selected and edge.id.to_waypoint in selected
     ]
+    selected_selection_only_edges = [
+        edge
+        for edge in selected_connectivity_edges
+        if (edge.id.from_waypoint, edge.id.to_waypoint) in selection_only_keys
+    ]
+    selected_edges = (
+        selected_connectivity_edges
+        if include_selection_only_edges
+        else [
+            edge
+            for edge in selected_connectivity_edges
+            if (edge.id.from_waypoint, edge.id.to_waypoint) not in selection_only_keys
+        ]
+    )
+    edge_disposition = (
+        "included_in_walk_public_annotations_only"
+        if include_selection_only_edges
+        else "excluded_from_bundle_and_walk"
+    )
 
     return {
-        "schema_version": 3,
+        "schema_version": 4,
         "zone_name": zone_name,
         "polygon": polygon,
         "halo_hops": halo_hops,
@@ -137,6 +164,24 @@ def create_plan(
         "halo_waypoint_ids": sorted(halo),
         "coordinate_sources": source_counts,
         "edge_source_counts": edge_source_counts(selected_edges),
+        "edge_transport": {
+            "policy": "orbit_site_edge_field_3_selection_only",
+            "include_in_walk": include_selection_only_edges,
+            "manual_reapply_required": bool(selected_selection_only_edges),
+            "operator_guidance": (
+                "After Orbit import, verify every listed edge and reapply its environment and "
+                "travel settings. Included edges may import as ordinary edges with reset UI "
+                "settings; excluded edges must be recreated in Orbit."
+            ),
+            "selection_only_edges": [
+                {
+                    "from": edge.id.from_waypoint,
+                    "to": edge.id.to_waypoint,
+                    "disposition": edge_disposition,
+                }
+                for edge in selected_selection_only_edges
+            ],
+        },
         "counts": {
             "core_waypoints": len(core),
             "halo_waypoints": len(halo),
@@ -147,13 +192,41 @@ def create_plan(
             "dependency_free_components_excluded": len(excluded_components),
             "dependency_bearing_components_protected": len(protected_components),
             "selected_edges": len(selected_edges),
-            "components": len(components),
-            "largest_component": len(components[0]) if components else 0,
+            "selected_connectivity_edges": len(selected_connectivity_edges),
+            "selection_only_edges_selected": len(selected_selection_only_edges),
+            "selection_only_edges_included": (
+                len(selected_selection_only_edges) if include_selection_only_edges else 0
+            ),
+            "selection_only_edges_excluded": (
+                0 if include_selection_only_edges else len(selected_selection_only_edges)
+            ),
+            "selection_components": len(selection_components),
+            "components": len(walk_components),
+            "largest_component": len(walk_components[0]) if walk_components else 0,
             "core_actions": sum(action["waypoint_id"] in core for action in actions),
             "halo_actions": sum(action["waypoint_id"] in halo for action in actions),
             "triggered_actions_explicitly_excluded": len(excluded_triggered_actions),
         },
     }
+
+
+def selection_only_edge_keys(metadata: dict[str, Any]) -> set[tuple[str, str]]:
+    """Read directed field-3 edge keys that need an explicit Walk transport decision."""
+    transport = metadata.get("edge_transport", {})
+    if not isinstance(transport, dict):
+        return set()
+    rows = transport.get("selection_only_edges", [])
+    if not isinstance(rows, list):
+        raise ValueError("edge_transport.selection_only_edges must be a list")
+    keys: set[tuple[str, str]] = set()
+    for row in rows:
+        if not isinstance(row, dict) or not row.get("from") or not row.get("to"):
+            raise ValueError("selection-only edge must contain from and to waypoint IDs")
+        key = (str(row["from"]), str(row["to"]))
+        if key in keys:
+            raise ValueError(f"duplicate selection-only edge: {key[0]} -> {key[1]}")
+        keys.add(key)
+    return keys
 
 
 def selection_dependency_waypoint_ids(metadata: dict[str, Any]) -> set[str]:

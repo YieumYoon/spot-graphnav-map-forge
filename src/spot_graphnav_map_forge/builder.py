@@ -10,7 +10,7 @@ from .actions import clone_site_element, clone_triggered_site_element
 from .archive import BackupArchive
 from .clone import clone_edge_snapshot, clone_subgraph, clone_waypoint_snapshot
 from .geometry import load_graph
-from .planner import resolve_triggered_action_exclusions
+from .planner import resolve_triggered_action_exclusions, selection_only_edge_keys
 from .wire import bytes_values, decode_fields
 
 
@@ -28,7 +28,29 @@ def build_clone(workspace: Path, plan_path: Path, out: Path) -> dict[str, object
     halo = set(plan["halo_waypoint_ids"])
     selected = core | halo
     clone_name = plan["zone_name"]
-    result = clone_subgraph(graph, selected, clone_name)
+    selection_only_keys = selection_only_edge_keys(metadata)
+    selected_selection_only_keys = {
+        key for key in selection_only_keys if key[0] in selected and key[1] in selected
+    }
+    declared_selection_only_keys = {
+        (str(row.get("from", "")), str(row.get("to", "")))
+        for row in plan.get("edge_transport", {}).get("selection_only_edges", [])
+        if isinstance(row, dict)
+    }
+    if selected_selection_only_keys != declared_selection_only_keys:
+        raise ValueError(
+            "plan selection-only edge policy does not match workspace; regenerate the plan"
+        )
+    include_selection_only_edges = bool(
+        plan.get("edge_transport", {}).get("include_in_walk", False)
+    )
+    excluded_edge_keys = set() if include_selection_only_edges else selection_only_keys
+    result = clone_subgraph(
+        graph,
+        selected,
+        clone_name,
+        excluded_edge_keys=excluded_edge_keys,
+    )
     snapshot_sources = metadata["snapshot_sources"]
     copied_waypoint_snapshots = 0
     copied_edge_snapshots = 0
@@ -270,10 +292,50 @@ def build_clone(workspace: Path, plan_path: Path, out: Path) -> dict[str, object
             "excluded_triggered_action_ids": sorted(excluded_triggered_action_ids),
             "cleanup": plan.get("selection_cleanup", {}),
         },
+        "edge_transport": {
+            "policy": "orbit_site_edge_field_3_selection_only",
+            "include_in_walk": include_selection_only_edges,
+            "manual_reapply_required": bool(selected_selection_only_keys),
+            "operator_guidance": (
+                "After Orbit import, verify every listed edge and reapply its environment and "
+                "travel settings. Included edges may import as ordinary edges with reset UI "
+                "settings; excluded edges must be recreated in Orbit."
+            ),
+            "selection_only_edges_excluded": [
+                {
+                    "source_from": source,
+                    "source_to": target,
+                    "new_from": result.remapper.map("waypoint", source),
+                    "new_to": result.remapper.map("waypoint", target),
+                    "disposition": "excluded_from_bundle_and_walk",
+                }
+                for source, target in sorted(
+                    set() if include_selection_only_edges else selected_selection_only_keys
+                )
+            ],
+            "selection_only_edges_included": [
+                {
+                    "source_from": source,
+                    "source_to": target,
+                    "new_from": result.remapper.map("waypoint", source),
+                    "new_to": result.remapper.map("waypoint", target),
+                    "disposition": "included_in_walk_public_annotations_only",
+                }
+                for source, target in sorted(
+                    selected_selection_only_keys if include_selection_only_edges else set()
+                )
+            ],
+        },
         "id_mappings": result.remapper.mappings,
         "counts": {
             "waypoints": len(result.graph.waypoints),
             "edges": len(result.graph.edges),
+            "selection_only_edges_included": (
+                len(selected_selection_only_keys) if include_selection_only_edges else 0
+            ),
+            "selection_only_edges_excluded": (
+                0 if include_selection_only_edges else len(selected_selection_only_keys)
+            ),
             "waypoint_snapshots": copied_waypoint_snapshots,
             "edge_snapshots": copied_edge_snapshots,
             "actions_cloned": len(cloned_actions),

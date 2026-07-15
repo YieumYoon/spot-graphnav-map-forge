@@ -80,6 +80,15 @@ def _parser() -> argparse.ArgumentParser:
         help="Exclude non-largest selected components with no actions, docks, or pano state.",
     )
     plan_parser.add_argument(
+        "--include-selection-only-edges",
+        action="store_true",
+        help=(
+            "Include Orbit SiteEdge field-3 edges in the bundle/Walk. Their public GraphNav "
+            "annotations are retained, but Orbit may reset the UI settings; verify and reapply "
+            "them after import. The default excludes these edges."
+        ),
+    )
+    plan_parser.add_argument(
         "--exclude-triggered-action",
         action="append",
         default=[],
@@ -273,7 +282,13 @@ def _prepare(args: argparse.Namespace) -> int:
         raise ValueError(f"output already exists: {out}")
     with BackupArchive(args.backup) as archive:
         site_map = resolve_site_map(archive, args.map_query)
-        graph, waypoint_snapshots, edge_snapshots = reconstruct_final_graph(archive, site_map)
+        (
+            graph,
+            waypoint_snapshots,
+            edge_snapshots,
+            selection_only_edges,
+        ) = reconstruct_final_graph(archive, site_map)
+        selection_only_edge_keys = set(selection_only_edges)
         site_waypoint_ids = set(site_map.waypoint_ids)
         all_actions = list_actions(archive)
         actions = [action for action in all_actions if action.waypoint_id in site_waypoint_ids]
@@ -319,7 +334,7 @@ def _prepare(args: argparse.Namespace) -> int:
                 ],
             }
         metadata = {
-            "schema_version": 2,
+            "schema_version": 3,
             "source_backup": str(args.backup.expanduser().resolve()),
             "site_map": {
                 "id": site_map.id,
@@ -329,6 +344,8 @@ def _prepare(args: argparse.Namespace) -> int:
             "counts": {
                 "waypoints": len(graph.waypoints),
                 "edges": len(graph.edges),
+                "walk_transport_edges": len(graph.edges) - len(selection_only_edges),
+                "selection_only_edges": len(selection_only_edges),
                 "actions": len(actions),
                 "triggered_actions": len(triggered_actions),
                 "explicit_relocalizations": sum(
@@ -340,6 +357,18 @@ def _prepare(args: argparse.Namespace) -> int:
             "snapshot_sources": {
                 "waypoint": waypoint_snapshots,
                 "edge": edge_snapshots,
+            },
+            "edge_transport": {
+                "policy": "orbit_site_edge_field_3_selection_only",
+                "selection_only_reason": (
+                    "Orbit SiteEdge field 3 state is not reconstructed by public Walk import; "
+                    "use for coordinate propagation and waypoint selection, make an explicit "
+                    "include/exclude choice in the plan, and reapply settings in Orbit after import"
+                ),
+                "manual_reapply_required": bool(selection_only_edges),
+                "selection_only_edges": [
+                    {"from": source, "to": target} for source, target in selection_only_edges
+                ],
             },
             "actions": action_metadata,
             "triggered_actions": [
@@ -418,6 +447,11 @@ def _prepare(args: argparse.Namespace) -> int:
                     "from": edge.id.from_waypoint,
                     "to": edge.id.to_waypoint,
                     "edge_source": edge.annotations.edge_source,
+                    "transport": (
+                        "selection_only"
+                        if (edge.id.from_waypoint, edge.id.to_waypoint) in selection_only_edge_keys
+                        else "walk"
+                    ),
                 }
                 for edge in graph.edges
             ],
@@ -453,6 +487,7 @@ def _plan(args: argparse.Namespace) -> int:
         triggered_action_exclusion_reason=args.triggered_action_exclusion_reason,
         exclude_unanchored_waypoints=args.exclude_unanchored_waypoints,
         exclude_dependency_free_components=args.exclude_dependency_free_components,
+        include_selection_only_edges=args.include_selection_only_edges,
     )
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(

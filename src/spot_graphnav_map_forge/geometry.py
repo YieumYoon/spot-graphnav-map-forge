@@ -109,16 +109,20 @@ def connectivity_halo(graph: map_pb2.Graph, core: set[str], hops: int) -> set[st
 
 
 def connected_components(
-    graph: map_pb2.Graph, waypoint_ids: set[str] | None = None
+    graph: map_pb2.Graph,
+    waypoint_ids: set[str] | None = None,
+    *,
+    excluded_edge_keys: set[tuple[str, str]] | None = None,
 ) -> list[set[str]]:
     selected = (
         {waypoint.id for waypoint in graph.waypoints} if waypoint_ids is None else set(waypoint_ids)
     )
     adjacency: dict[str, set[str]] = defaultdict(set)
+    excluded = excluded_edge_keys or set()
     for edge in graph.edges:
         source = edge.id.from_waypoint
         target = edge.id.to_waypoint
-        if source in selected and target in selected:
+        if (source, target) not in excluded and source in selected and target in selected:
             adjacency[source].add(target)
             adjacency[target].add(source)
     remaining = set(selected)

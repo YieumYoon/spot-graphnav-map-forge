@@ -85,7 +85,19 @@
           <div class="cleanup-preview" aria-live="polite">
             <span>Unanchored excluded <strong id="cleanup-unanchored">0</strong></span>
             <span>Empty remnants <strong id="cleanup-remnants">0</strong></span>
-            <span>Final components <strong id="cleanup-components">0</strong></span>
+            <span>Selection components <strong id="cleanup-components">0</strong></span>
+          </div>
+
+          <div class="edge-transport-warning">
+            <strong>Orbit field 3 edges</strong>
+            <p>Dashed amber edges help select and position waypoints. Public Walk import may not preserve their Orbit environment or travel settings.</p>
+            <label class="checkbox-field" for="include-selection-only-edges">
+              <input id="include-selection-only-edges" type="checkbox">
+              <span>
+                <strong>Include these edges in the Walk</strong>
+                <small>Experimental. Off excludes the edges; on carries their public annotations. In both modes, verify and reapply settings in Orbit after import.</small>
+              </span>
+            </label>
           </div>
         </section>
 
@@ -97,7 +109,9 @@
           <div class="stat-grid">
             <div class="stat-card"><span>Core</span><strong id="stat-core">0</strong></div>
             <div class="stat-card"><span>Halo</span><strong id="stat-halo">0</strong></div>
-            <div class="stat-card"><span>Edges</span><strong id="stat-edges">0</strong></div>
+            <div class="stat-card"><span>Walk edges</span><strong id="stat-edges">0</strong></div>
+            <div class="stat-card warning-stat"><span>Field 3</span><strong id="stat-selection-only">0</strong></div>
+            <div class="stat-card"><span>Walk comps</span><strong id="stat-walk-components">0</strong></div>
             <div class="stat-card"><span>Actions</span><strong id="stat-actions">0</strong></div>
           </div>
           <div class="edge-breakdown">
@@ -114,6 +128,7 @@
             <span><i class="node-dot action"></i>Action</span>
             <span><i class="node-dot core"></i>Core</span>
             <span><i class="node-dot halo"></i>Halo</span>
+            <span><i class="edge-dot selection-only"></i>Field 3 edge</span>
           </div>
           <p id="map-summary" class="map-summary">Preparing map index…</p>
         </section>

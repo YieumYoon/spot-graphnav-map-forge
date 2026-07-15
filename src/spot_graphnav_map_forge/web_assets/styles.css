@@ -409,6 +409,31 @@ input[type="number"]:focus {
   font-family: "Fira Code", ui-monospace, monospace;
 }
 
+.edge-transport-warning {
+  background: color-mix(in srgb, var(--amber) 10%, var(--panel-raised));
+  border: 1px solid color-mix(in srgb, var(--amber) 48%, var(--border));
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  padding: 11px;
+}
+
+.edge-transport-warning > strong {
+  color: var(--amber);
+  font-size: 12px;
+}
+
+.edge-transport-warning > p {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.edge-transport-warning .checkbox-field {
+  border-top: 1px solid color-mix(in srgb, var(--amber) 28%, transparent);
+  padding-top: 9px;
+}
+
 .section-title-row {
   align-items: center;
   display: flex;
@@ -435,8 +460,12 @@ input[type="number"]:focus {
 .stat-grid {
   display: grid;
   gap: 7px;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   margin-top: 12px;
+}
+
+.stat-card.warning-stat strong {
+  color: var(--amber);
 }
 
 .stat-card {
@@ -533,6 +562,15 @@ input[type="number"]:focus {
   border: 2px solid var(--cyan);
   height: 8px;
   width: 8px;
+}
+
+.edge-dot {
+  display: inline-block;
+  width: 18px;
+}
+
+.edge-dot.selection-only {
+  border-top: 2px dashed var(--amber);
 }
 
 .map-summary {

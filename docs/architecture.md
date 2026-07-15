@@ -23,7 +23,10 @@ For a selected Site Map:
 - map membership comes from the Site Map record;
 - a site-level waypoint wrapper is preferred over the raw waypoint record;
 - edges come from the site-level edge collection rather than recording-session edges;
-- wrappers with observed suppression flags are excluded;
+- site-edge wrappers with observed field 3 are retained for coordinate propagation and waypoint
+  selection because their embedded public Edge still carries useful topology and annotations;
+- site-edge wrappers with observed field 4 are excluded as inactive/tombstoned records, including
+  wrappers that also have field 3;
 - referenced waypoint and edge snapshots are resolved by ID;
 - map-layout control points seed a workspace-only coordinate projection;
 - edge transforms propagate that projection for polygon selection;
@@ -31,9 +34,14 @@ For a selected Site Map:
 - components that cannot reach a layout control point are marked unanchored.
 
 Using site-level edge records preserves edits that are not owned by a recording session, including
-manual links, loop closures, and site-specific annotations. This behavior is based on observed
-Orbit 5.1.8 archive semantics and is guarded by offline validation; it is not a vendor-published
-backup schema.
+manual links, loop closures, site-specific annotations, and edges whose public annotations disable
+directed exploration or alternate-route finding. Orbit 5.1.8 public Walk import did not recreate
+the private field-3 SiteEdge state during verification. Plans therefore record an explicit transport
+choice: exclude those edges by default, or experimentally include their public Edge annotations.
+In either mode, operators must verify the listed edges and reapply environment/travel settings in
+Orbit after import; excluded edges must first be recreated there. Field-3 edges always remain
+available to the offline selector so their connected waypoints can be included. This behavior is
+based on observed archive semantics and is not a vendor-published backup schema.
 
 ## Zone selection and halo
 

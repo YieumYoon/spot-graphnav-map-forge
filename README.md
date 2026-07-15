@@ -65,6 +65,8 @@ review the [compatibility matrix](docs/compatibility.md) before using it.
 - inventories Site Maps directly from a backup `.tar` without extracting the complete archive;
 - reconstructs the final edited `map_pb2.Graph` from Site Map waypoint and edge records;
 - retains active manual edges, loop closures, graph annotations, and referenced snapshots;
+- identifies Orbit field-3 edges as an explicit transport decision while still using them for
+  coordinate propagation and waypoint selection;
 - selects a zone with a polygon and an optional graph-neighbor halo;
 - can exclude unanchored remnants and dependency-free disconnected components with an auditable
   plan;
@@ -214,6 +216,30 @@ uv run spot-map-forge plan workspace/example-map \
 Unanchored cleanup is enabled by default in the editor but remains explicit in saved plans. Empty
 component cleanup is opt-in. Exact excluded IDs, component sizes, and protected dependency-bearing
 components are recorded in the plan, audit, and clone manifest.
+
+## Orbit field-3 edge transport
+
+Observed Orbit SiteEdge field-3 records cannot be assumed to round-trip through the public Walk
+format with their private UI state intact. The selector draws them as dashed amber edges and uses
+them for coordinate propagation, halo expansion, and waypoint selection. Each plan then makes the
+transport choice explicit:
+
+- default: exclude field-3 edges from the bundle and Walk; their waypoints and other selected edges
+  remain, but the excluded edges must be recreated in Orbit;
+- `--include-selection-only-edges`: include their public `Edge.annotations` experimentally; Orbit
+  may still display reset environment or travel settings.
+
+After either mode is imported, verify every field-3 edge listed by the plan/audit and reapply its
+environment and **Allow travel along this edge** settings in Orbit. The editor shows both the Walk
+edge count and the component count expected after the chosen transport mode.
+
+```bash
+uv run spot-map-forge plan workspace/example-map \
+  --polygon examples/zone.example.json \
+  --zone-name zone-a \
+  --include-selection-only-edges \
+  --out workspace/example-map/zone-a.plan.json
+```
 
 Triggered AI SiteElements remain fail-closed by default. If a backup contains a confirmed
 incomplete or orphaned triggered record, exclude only that exact ID and record the evidence in the

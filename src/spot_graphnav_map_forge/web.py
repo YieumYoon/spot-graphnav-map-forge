@@ -12,7 +12,11 @@ from typing import Any
 from bosdyn.api.graph_nav import map_pb2
 
 from .geometry import WaypointCoordinate, connected_components, load_graph
-from .planner import create_plan, selection_dependency_waypoint_ids
+from .planner import (
+    create_plan,
+    selection_dependency_waypoint_ids,
+    selection_only_edge_keys,
+)
 
 MAX_REQUEST_BYTES = 1_000_000
 ASSET_TYPES = {
@@ -47,6 +51,7 @@ def build_workspace_payload(workspace: Path) -> dict[str, object]:
     action_counts = Counter(action["waypoint_id"] for action in action_rows)
     edge_source_enum = map_pb2.Edge.Annotations.DESCRIPTOR.fields_by_name["edge_source"].enum_type
     edge_source_names = {value.number: value.name for value in edge_source_enum.values}
+    selection_only_keys = selection_only_edge_keys(metadata)
 
     return {
         "site_map": metadata["site_map"],
@@ -78,6 +83,11 @@ def build_workspace_payload(workspace: Path) -> dict[str, object]:
                 "source": edge_source_names.get(
                     edge.annotations.edge_source, str(edge.annotations.edge_source)
                 ),
+                "transport": (
+                    "selection_only"
+                    if (edge.id.from_waypoint, edge.id.to_waypoint) in selection_only_keys
+                    else "walk"
+                ),
             }
             for edge in graph.edges
         ],
@@ -92,6 +102,7 @@ def build_workspace_payload(workspace: Path) -> dict[str, object]:
             for action in action_rows
         ],
         "selection_dependency_waypoint_ids": sorted(selection_dependency_waypoint_ids(metadata)),
+        "edge_transport": metadata.get("edge_transport", {}),
     }
 
 
@@ -122,6 +133,7 @@ def save_plan(workspace: Path, request: dict[str, Any]) -> tuple[Path, dict[str,
         exclude_dependency_free_components=bool(
             request.get("exclude_dependency_free_components", False)
         ),
+        include_selection_only_edges=bool(request.get("include_selection_only_edges", False)),
     )
     plans_dir = workspace / "plans"
     plans_dir.mkdir(parents=True, exist_ok=True)
