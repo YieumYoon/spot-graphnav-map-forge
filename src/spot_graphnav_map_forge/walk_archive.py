@@ -69,6 +69,10 @@ def export_walk_archive(
     recording_name: str | None = None,
     template_archive: Path | None = None,
     triggered_ai_mode: str = "block",
+    sleep_waypoint_id: str | None = None,
+    sleep_duration_seconds: float = 0.25,
+    sleep_name: str = "Sleep - 1",
+    sleep_after_element: str | None = None,
 ) -> dict[str, object]:
     """Convert a validated clone bundle into a clone-ID Autowalk archive.
 
@@ -113,6 +117,7 @@ def export_walk_archive(
     navigation_only = 0
     aivi_named_elements = 0
     action_kind_counts: Counter[str] = Counter()
+    emitted_elements: list[walks_pb2.Element] = []
     triggered_by_parent: dict[str, list[dict[str, object]]] = {}
     if triggered_ai_mode == "fold-into-parent":
         for record in triggered_actions:
@@ -129,7 +134,7 @@ def export_walk_archive(
             triggered_ai_folds.append(
                 _fold_triggered_ai_into_parent(bundle, element, triggered_record)
             )
-        walk.elements.add().CopyFrom(element)
+        emitted_elements.append(element)
         embedded_images += image_count
         unused_image_sidecars.extend(unused)
         action_kind = element.action.WhichOneof("action")
@@ -144,8 +149,42 @@ def export_walk_archive(
             "triggered AI inspection parent was not emitted as a Walk Element: "
             + ", ".join(sorted(triggered_by_parent))
         )
+
+    synthetic_sleep: dict[str, object] | None = None
+    if sleep_waypoint_id is not None:
+        sleep_element, synthetic_sleep = _walk_sleep_element(
+            graph,
+            manifest,
+            walk_id,
+            sleep_waypoint_id,
+            sleep_duration_seconds,
+            sleep_name,
+            opaque_target_profile,
+        )
+        insert_at = len(emitted_elements)
+        if sleep_after_element is not None:
+            matching_indexes = [
+                index
+                for index, element in enumerate(emitted_elements)
+                if element.id == sleep_after_element or element.name == sleep_after_element
+            ]
+            if len(matching_indexes) != 1:
+                raise ValueError(
+                    "--sleep-after-element must match exactly one existing element ID or name, "
+                    f"got {len(matching_indexes)} matches: {sleep_after_element!r}"
+                )
+            insert_at = matching_indexes[0] + 1
+        emitted_elements.insert(insert_at, sleep_element)
+        synthetic_sleep["element_index"] = insert_at
+        synthetic_sleep["inserted_after"] = sleep_after_element
+        action_kind_counts["sleep"] += 1
+    elif sleep_after_element is not None:
+        raise ValueError("--sleep-after-element requires --sleep-waypoint-id")
+
+    for element in emitted_elements:
+        walk.elements.add().CopyFrom(element)
     for dock_record in manifest.get("docks", []):
-        walk.docks.add().CopyFrom(_walk_dock(bundle, dock_record))
+        walk.docks.add().CopyFrom(_walk_dock(bundle, dock_record, opaque_target_profile))
 
     metadata = _read_template_metadata(template_archive) if template_archive else None
     root = f"{archive_name}.walk"
@@ -238,6 +277,7 @@ def export_walk_archive(
             ),
         },
         "triggered_ai_folds": triggered_ai_folds,
+        "synthetic_sleep_action": synthetic_sleep or {"status": "not_requested"},
         "unused_action_image_sidecar_files": unused_image_sidecars,
         "bundle_warnings": bundle_report.warnings,
         "validation": asdict(archive_report),
@@ -705,8 +745,11 @@ def _set_navigation_target(
                 f"SiteElement relocalize payload is invalid: {element.id}: {exc}"
             ) from exc
     if opaque_target_profile is not None:
-        navigate_to.travel_params.MergeFromString(opaque_target_profile.travel_params_fields)
-        element.target.MergeFromString(opaque_target_profile.target_fields)
+        _merge_opaque_target_profile(
+            element.target,
+            opaque_target_profile,
+            f"element {element.id}",
+        )
 
 
 def _load_opaque_target_profile(
@@ -759,7 +802,136 @@ def _load_opaque_target_profile(
     )
 
 
-def _walk_dock(bundle: Path, dock_record: dict[str, object]) -> walks_pb2.Dock:
+def _walk_sleep_element(
+    graph: map_pb2.Graph,
+    manifest: dict[str, object],
+    walk_id: str,
+    requested_waypoint_id: str,
+    duration_seconds: float,
+    name: str,
+    opaque_target_profile: _OpaqueTargetProfile | None,
+) -> tuple[walks_pb2.Element, dict[str, object]]:
+    """Create one explicitly requested public Sleep element with an auditable identity."""
+    if opaque_target_profile is None:
+        raise ValueError(
+            "synthetic Sleep export requires an observed opaque target profile in the bundle"
+        )
+    normalized_name = name.strip()
+    if not normalized_name:
+        raise ValueError("Sleep action name cannot be empty")
+    if "\0" in normalized_name or any(ord(char) < 32 for char in normalized_name):
+        raise ValueError("Sleep action name contains a control character")
+    if not math.isfinite(duration_seconds) or duration_seconds <= 0:
+        raise ValueError("Sleep duration must be a positive finite number of seconds")
+    total_nanos = round(duration_seconds * 1_000_000_000)
+    if total_nanos <= 0:
+        raise ValueError("Sleep duration rounds to zero nanoseconds")
+    seconds, nanos = divmod(total_nanos, 1_000_000_000)
+    if seconds > 315_576_000_000:
+        raise ValueError("Sleep duration exceeds the protobuf Duration limit")
+
+    graph_waypoint_ids = {waypoint.id for waypoint in graph.waypoints}
+    mappings = manifest.get("id_mappings", {})
+    waypoint_mappings = mappings.get("waypoint", {}) if isinstance(mappings, dict) else {}
+    if not isinstance(waypoint_mappings, dict):
+        raise ValueError("manifest waypoint ID mappings must be an object")
+    if requested_waypoint_id in graph_waypoint_ids:
+        waypoint_id = requested_waypoint_id
+        source_ids = [
+            str(source_id)
+            for source_id, cloned_id in waypoint_mappings.items()
+            if cloned_id == waypoint_id
+        ]
+        source_waypoint_id = source_ids[0] if len(source_ids) == 1 else None
+        requested_id_kind = "cloned"
+    else:
+        mapped_id = waypoint_mappings.get(requested_waypoint_id)
+        if not isinstance(mapped_id, str) or mapped_id not in graph_waypoint_ids:
+            raise ValueError(
+                f"Sleep waypoint is not present in the cloned graph: {requested_waypoint_id}"
+            )
+        waypoint_id = mapped_id
+        source_waypoint_id = requested_waypoint_id
+        requested_id_kind = "source"
+
+    element_id = str(
+        uuid.uuid5(
+            DEFAULT_NAMESPACE,
+            f"{walk_id}:synthetic-sleep:{waypoint_id}:{normalized_name}:{seconds}:{nanos}",
+        )
+    )
+    element = walks_pb2.Element(name=normalized_name, id=element_id)
+    _set_default_element_behaviors(element)
+    element.action.sleep.duration.seconds = seconds
+    element.action.sleep.duration.nanos = nanos
+    navigate_to = element.target.navigate_to
+    navigate_to.destination_waypoint_id = waypoint_id
+    navigate_to.travel_params.max_distance = 0.2
+    navigate_to.travel_params.feature_quality_tolerance = (
+        navigate_to.travel_params.TOLERANCE_DEFAULT
+    )
+    navigate_to.travel_params.blocked_path_wait_time.seconds = 5
+    _merge_opaque_target_profile(element.target, opaque_target_profile, f"Sleep {element_id}")
+    return element, {
+        "status": "explicitly_synthesized",
+        "element_id": element_id,
+        "name": normalized_name,
+        "duration_seconds": seconds + nanos / 1_000_000_000,
+        "requested_waypoint_id": requested_waypoint_id,
+        "requested_id_kind": requested_id_kind,
+        "source_waypoint_id": source_waypoint_id,
+        "cloned_waypoint_id": waypoint_id,
+        "target_profile": "public_defaults_plus_observed_opaque_fields",
+    }
+
+
+def _merge_opaque_target_profile(
+    target: walks_pb2.Target,
+    profile: _OpaqueTargetProfile,
+    owner: str,
+) -> None:
+    _merge_opaque_message_fields(
+        target.navigate_to.travel_params,
+        profile.travel_params_fields,
+        profile.travel_params_field_numbers,
+        f"{owner} TravelParams",
+    )
+    _merge_opaque_message_fields(
+        target,
+        profile.target_fields,
+        profile.target_field_numbers,
+        f"{owner} Target",
+    )
+
+
+def _merge_opaque_message_fields(
+    message: object,
+    profile_payload: bytes,
+    field_numbers: tuple[int, ...],
+    owner: str,
+) -> None:
+    expected = decode_fields(profile_payload)
+    current = decode_fields(message.SerializeToString(deterministic=True))
+    existing = tuple(field for field in current if field.number in field_numbers)
+    if existing and existing != expected:
+        raise ValueError(f"{owner} already contains a different opaque field profile")
+    if not existing:
+        message.MergeFromString(profile_payload)
+    merged = decode_fields(message.SerializeToString(deterministic=True))
+    retained = tuple(field for field in merged if field.number in field_numbers)
+    if retained != expected:
+        raise ValueError(f"{owner} did not retain the opaque field profile exactly")
+
+
+def _walk_dock(
+    bundle: Path,
+    dock_record: dict[str, object],
+    opaque_target_profile: _OpaqueTargetProfile | None,
+) -> walks_pb2.Dock:
+    if opaque_target_profile is None:
+        raise ValueError(
+            "dock export requires an observed opaque target profile; refusing an incomplete Dock"
+        )
     target_path = bundle / str(dock_record["cloned_target"])
     if not target_path.is_file():
         raise ValueError(f"cloned dock target missing: {target_path}")
@@ -768,6 +940,21 @@ def _walk_dock(bundle: Path, dock_record: dict[str, object]) -> walks_pb2.Dock:
         target.ParseFromString(target_path.read_bytes())
     except DecodeError as exc:
         raise ValueError(f"invalid cloned dock target: {target_path}") from exc
+    if target.WhichOneof("target") != "navigate_to":
+        raise ValueError(f"cloned dock target is not NavigateTo: {target_path}")
+    travel_fields = decode_fields(target.navigate_to.travel_params.SerializeToString())
+    travel_field_numbers = {field.number for field in travel_fields}
+    if 5 not in travel_field_numbers:
+        target.navigate_to.travel_params.feature_quality_tolerance = (
+            target.navigate_to.travel_params.TOLERANCE_DEFAULT
+        )
+    if 10 not in travel_field_numbers:
+        target.navigate_to.travel_params.blocked_path_wait_time.seconds = 5
+    _merge_opaque_target_profile(
+        target,
+        opaque_target_profile,
+        f"dock {dock_record['dock_id']}",
+    )
     dock = walks_pb2.Dock(
         dock_id=int(dock_record["dock_id"]),
         docked_waypoint_id=str(dock_record["new_docked_waypoint_id"]),

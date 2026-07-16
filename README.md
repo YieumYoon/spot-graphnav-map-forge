@@ -183,6 +183,23 @@ This does not create or choose a fleet-manager recording UUID. Any server-side r
 is assigned during manual import. The export summary lists the source session-label distribution
 for auditability, so treat captured CLI output as private operational data.
 
+One explicit public Sleep action can be added without pretending it came from a copied
+SiteElement. The waypoint may be supplied using its source or cloned ID; the export summary
+records both identities, the duration, generated Element ID, and insertion position:
+
+```bash
+uv run spot-map-forge export-walk output/zone-a \
+  --out output/zone-a-sleep.walk.zip \
+  --name zone-a-sleep \
+  --sleep-waypoint-id '<waypoint-id>' \
+  --sleep-duration-seconds 0.25 \
+  --sleep-after-element 'Localize - 1'
+```
+
+Dock export is fail-closed when the bundle has no same-backup observed target profile. The
+exporter applies the observed public travel defaults and retained opaque target/travel fields to
+the dock prep target; it no longer emits a structurally valid but incomplete Dock.
+
 Upload remains a deliberate manual step. Follow the
 [same-instance verification checklist](docs/import-poc.md) with a disposable clone name.
 

@@ -613,7 +613,12 @@ def test_export_walk_can_experimentally_fold_triggered_aivi_into_parent(
 
 
 def test_export_walk_includes_cloned_dock(tmp_path: Path) -> None:
-    bundle, ids = _bundle(tmp_path, navigation_only=True, with_dock=True)
+    bundle, ids = _bundle(
+        tmp_path,
+        navigation_only=True,
+        with_dock=True,
+        with_opaque_profile=True,
+    )
     output = tmp_path / "dock.walk.zip"
 
     result = export_walk_archive(bundle, output, name="dock")
@@ -626,6 +631,69 @@ def test_export_walk_includes_cloned_dock(tmp_path: Path) -> None:
     assert walk.docks[0].docked_waypoint_id == ids["waypoint_id"]
     assert walk.docks[0].target_prep_pose.navigate_to.destination_waypoint_id == ids["waypoint_id"]
     assert walk.docks[0].prompt_duration.seconds == 10
+    target = walk.docks[0].target_prep_pose
+    travel_params = target.navigate_to.travel_params
+    assert travel_params.feature_quality_tolerance == travel_params.TOLERANCE_DEFAULT
+    assert travel_params.blocked_path_wait_time.seconds == 5
+    target_fields = decode_fields(target.SerializeToString())
+    travel_fields = decode_fields(travel_params.SerializeToString())
+    assert bytes_values(target_fields, 4) == (b"opaque-target-4",)
+    assert bytes_values(travel_fields, 12) == (b"opaque-travel-12",)
+    assert bytes_values(travel_fields, 13) == (b"opaque-travel-13",)
+    assert validate_walk_archive(output).valid
+
+
+def test_export_walk_refuses_dock_without_observed_target_profile(tmp_path: Path) -> None:
+    bundle, _ = _bundle(tmp_path, navigation_only=True, with_dock=True)
+
+    with pytest.raises(ValueError, match="refusing an incomplete Dock"):
+        export_walk_archive(bundle, tmp_path / "incomplete-dock.walk.zip", name="dock")
+
+
+def test_export_walk_adds_audited_sleep_action_at_source_waypoint(tmp_path: Path) -> None:
+    bundle, ids = _bundle(tmp_path, with_opaque_profile=True)
+    output = tmp_path / "sleep.walk.zip"
+
+    result = export_walk_archive(
+        bundle,
+        output,
+        name="sleep",
+        sleep_waypoint_id="source-waypoint",
+        sleep_duration_seconds=0.25,
+        sleep_name="Sleep - 1",
+        sleep_after_element="Gauge",
+    )
+
+    report = result["synthetic_sleep_action"]
+    assert report["status"] == "explicitly_synthesized"
+    assert report["requested_id_kind"] == "source"
+    assert report["source_waypoint_id"] == "source-waypoint"
+    assert report["cloned_waypoint_id"] == ids["waypoint_id"]
+    assert report["duration_seconds"] == pytest.approx(0.25)
+    assert report["element_index"] == 1
+    assert report["inserted_after"] == "Gauge"
+    assert result["action_kinds"] == {"data_acquisition": 1, "sleep": 1}
+
+    with zipfile.ZipFile(output) as archive:
+        walk = walks_pb2.Walk.FromString(archive.read("sleep.walk/missions/sleep.walk"))
+    assert [element.name for element in walk.elements] == ["Gauge", "Sleep - 1"]
+    sleep = walk.elements[1]
+    assert sleep.id == report["element_id"]
+    assert sleep.action.WhichOneof("action") == "sleep"
+    assert sleep.action.sleep.duration.seconds == 0
+    assert sleep.action.sleep.duration.nanos == 250_000_000
+    assert sleep.target.navigate_to.destination_waypoint_id == ids["waypoint_id"]
+    assert sleep.target.navigate_to.travel_params.max_distance == pytest.approx(0.2)
+    assert (
+        sleep.target.navigate_to.travel_params.feature_quality_tolerance
+        == sleep.target.navigate_to.travel_params.TOLERANCE_DEFAULT
+    )
+    assert sleep.target.navigate_to.travel_params.blocked_path_wait_time.seconds == 5
+    target_fields = decode_fields(sleep.target.SerializeToString())
+    travel_fields = decode_fields(sleep.target.navigate_to.travel_params.SerializeToString())
+    assert bytes_values(target_fields, 4) == (b"opaque-target-4",)
+    assert bytes_values(travel_fields, 12) == (b"opaque-travel-12",)
+    assert bytes_values(travel_fields, 13) == (b"opaque-travel-13",)
     assert validate_walk_archive(output).valid
 
 

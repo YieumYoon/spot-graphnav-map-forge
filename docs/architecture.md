@@ -101,6 +101,11 @@ Autowalk messages:
 Observed `mission_id` values are retained as source provenance, not treated as current Walk
 membership. Existing mission order is intentionally not cloned.
 
+An operator may explicitly request one synthetic public Sleep Element during export. It is never
+classified as a copied SiteElement: the export report records its source/cloned waypoint IDs,
+duration, deterministic Element ID, and insertion position. Its navigation target uses the same
+observed public and opaque target profile as copied Elements.
+
 ## Recording-session labels
 
 GraphNav waypoints retain public `ClientMetadata`, including the recording-time `session_name`.
@@ -142,7 +147,10 @@ capture Elements are also not reconstructed when no equivalent SiteElement exist
 
 Dock records are deduplicated by physical dock number, docked waypoint, and public prep Target. A
 dock is cloned only when all referenced waypoints are present. Its record identity and waypoint
-references are remapped; its physical dock number is preserved.
+references are remapped; its physical dock number is preserved. The prep target receives the
+public travel defaults and retained opaque Target/TravelParams profile observed in the same
+backup. Export fails closed when that profile is unavailable instead of emitting an incomplete
+Dock that only passes structural validation.
 
 Explicit public `SetLocalizationRequest` payloads are retained and nested initial-guess waypoint
 references are remapped. Both features remain experimental until same-instance import, runtime,

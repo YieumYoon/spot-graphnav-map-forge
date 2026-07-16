@@ -155,6 +155,28 @@ def _parser() -> argparse.ArgumentParser:
             "experimental same-instance import probe and does not encode the private trigger."
         ),
     )
+    export_walk_parser.add_argument(
+        "--sleep-waypoint-id",
+        help=(
+            "Explicitly synthesize one public Sleep action at this source or cloned waypoint ID. "
+            "The generated action is reported separately from copied SiteElements."
+        ),
+    )
+    export_walk_parser.add_argument(
+        "--sleep-duration-seconds",
+        type=float,
+        default=0.25,
+        help="Duration of the explicitly synthesized Sleep action (default: 0.25).",
+    )
+    export_walk_parser.add_argument(
+        "--sleep-name",
+        default="Sleep - 1",
+        help="Display name for the explicitly synthesized Sleep action.",
+    )
+    export_walk_parser.add_argument(
+        "--sleep-after-element",
+        help="Insert the Sleep action after the unique existing element ID or exact name.",
+    )
     export_walk_parser.set_defaults(handler=_export_walk)
 
     validate_walk_parser = subparsers.add_parser(
@@ -557,6 +579,10 @@ def _export_walk(args: argparse.Namespace) -> int:
         recording_name=args.recording_name,
         template_archive=args.template_archive,
         triggered_ai_mode=args.triggered_ai_mode,
+        sleep_waypoint_id=args.sleep_waypoint_id,
+        sleep_duration_seconds=args.sleep_duration_seconds,
+        sleep_name=args.sleep_name,
+        sleep_after_element=args.sleep_after_element,
     )
     print(json.dumps(result, indent=2, ensure_ascii=False, sort_keys=True))
     return 0
