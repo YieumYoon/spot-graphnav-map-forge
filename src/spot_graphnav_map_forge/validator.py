@@ -12,6 +12,14 @@ from google.protobuf.message import DecodeError
 from .actions import source_mission_ids, triggered_action_reference
 from .geometry import connected_components, load_graph
 from .models import ValidationReport
+from .remap import (
+    IDENTITY_MODE_CLONE,
+    IDENTITY_MODE_ORBIT_NATIVE,
+    IDENTITY_MODE_PRESERVE,
+    IDENTITY_MODES,
+    PRESERVABLE_ID_KINDS,
+    is_orbit_native_id,
+)
 from .wire import decode_fields, source_token_remains, text_values
 
 
@@ -79,6 +87,40 @@ def validate_bundle(bundle: Path, write_report: bool = True) -> ValidationReport
         report.error("clone_manifest.json is missing")
     else:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        identity_policy = manifest.get("identity_policy", {})
+        if not isinstance(identity_policy, dict):
+            report.error("identity_policy must be an object")
+            identity_policy = {}
+        identity_mode = str(identity_policy.get("mode", IDENTITY_MODE_CLONE))
+        if identity_mode not in IDENTITY_MODES:
+            report.error(f"unsupported identity mode: {identity_mode}")
+            identity_mode = IDENTITY_MODE_CLONE
+        id_mappings = manifest.get("id_mappings", {})
+        if not isinstance(id_mappings, dict):
+            report.error("id_mappings must be an object")
+            id_mappings = {}
+        for kind, raw_mapping in id_mappings.items():
+            if not isinstance(raw_mapping, dict):
+                report.error(f"ID mapping must be an object: {kind}")
+                continue
+            preserve_kind = identity_mode == IDENTITY_MODE_PRESERVE and kind in PRESERVABLE_ID_KINDS
+            for source_id, output_id in raw_mapping.items():
+                if not isinstance(source_id, str) or not isinstance(output_id, str):
+                    report.error(f"ID mapping must contain strings: {kind}")
+                    continue
+                if preserve_kind and source_id != output_id:
+                    report.error(f"preserve mode changed {kind} identity: {source_id}")
+                if identity_mode != IDENTITY_MODE_PRESERVE and source_id == output_id:
+                    report.error(f"clone mode retained {kind} identity: {source_id}")
+                if identity_mode == IDENTITY_MODE_ORBIT_NATIVE and not is_orbit_native_id(
+                    kind, output_id
+                ):
+                    report.error(f"Orbit-native mode emitted incompatible {kind} ID: {output_id}")
+        if identity_mode == IDENTITY_MODE_PRESERVE:
+            report.warnings.append(
+                "bundle preserves shared GraphNav/SiteElement identities; Orbit coexistence and "
+                "deletion lifecycle remain an import-time experiment"
+            )
         edge_transport = manifest.get("edge_transport", {})
         included_field_3_edges = edge_transport.get("selection_only_edges_included", [])
         excluded_field_3_edges = edge_transport.get("selection_only_edges_excluded", [])
@@ -166,7 +208,7 @@ def validate_bundle(bundle: Path, write_report: bool = True) -> ValidationReport
                 if not image_path.exists():
                     report.error(f"cloned action image missing: {image['cloned_path']}")
                     continue
-                if source_element_id in image_path.name:
+                if source_element_id != new_element_id and source_element_id in image_path.name:
                     report.error(f"source action ID leaked into image name: {image_path.name}")
                 image_payload = image_pb2.Image()
                 try:
@@ -290,18 +332,33 @@ def validate_bundle(bundle: Path, write_report: bool = True) -> ValidationReport
                 f"{len(excluded_triggered_actions)} triggered AI inspection(s) were explicitly "
                 "excluded by the audited plan"
             )
-        if actions and not manifest.get("action_payloads_rewritten", False):
-            report.error("manifest does not confirm action payload ID rewriting")
+        if actions and not manifest.get("action_payload_identities_validated", False):
+            if manifest.get("schema_version", 0) >= 3:
+                report.error("manifest does not confirm action payload identity validation")
+            elif not manifest.get("action_payloads_rewritten", False):
+                report.error("manifest does not confirm action payload ID rewriting")
+        if (
+            actions
+            and identity_mode != IDENTITY_MODE_PRESERVE
+            and not manifest.get("action_payloads_rewritten", False)
+        ):
+            report.error("clone mode does not confirm action payload ID rewriting")
         if external_dependency_actions:
             report.warnings.append(
                 f"{external_dependency_actions} cloned action(s) retain unclassified UUID "
                 "references"
             )
         if not manifest.get("action_ingestion_ready", False):
-            report.warnings.append(
-                "action payload identities are cloned, but fleet-manager ingestion remains "
-                "unverified"
-            )
+            if identity_mode == IDENTITY_MODE_PRESERVE:
+                report.warnings.append(
+                    "action payload identities are preserved, but Orbit reuse and ingestion "
+                    "remain unverified"
+                )
+            else:
+                report.warnings.append(
+                    "action payload identities are cloned, but fleet-manager ingestion remains "
+                    "unverified"
+                )
 
         docks = manifest.get("docks", [])
         new_dock_record_ids: set[str] = set()
@@ -337,8 +394,14 @@ def validate_bundle(bundle: Path, write_report: bool = True) -> ValidationReport
                 dock["source_docked_waypoint_id"],
                 *dock["source_target_waypoint_ids"],
             }
+            waypoint_mappings = id_mappings.get("waypoint", {})
+            if not isinstance(waypoint_mappings, dict):
+                waypoint_mappings = {}
             leaked_source_ids = [
-                source_id for source_id in source_ids if source_id.encode() in target_payload
+                source_id
+                for source_id in source_ids
+                if waypoint_mappings.get(source_id, source_id) != source_id
+                and source_id.encode() in target_payload
             ]
             if leaked_source_ids:
                 report.error(
@@ -346,13 +409,32 @@ def validate_bundle(bundle: Path, write_report: bool = True) -> ValidationReport
                 )
         report.counts["docks_cloned"] = len(docks)
         report.counts["docks_boundary_skipped"] = len(manifest.get("docks_skipped", []))
-        if docks and not manifest.get("dock_targets_rewritten", False):
-            report.error("manifest does not confirm dock target ID rewriting")
+        if docks and not manifest.get("dock_target_identities_validated", False):
+            if manifest.get("schema_version", 0) >= 3:
+                report.error("manifest does not confirm dock target identity validation")
+            elif not manifest.get("dock_targets_rewritten", False):
+                report.error("manifest does not confirm dock target ID rewriting")
+        if (
+            docks
+            and identity_mode != IDENTITY_MODE_PRESERVE
+            and not manifest.get("dock_targets_rewritten", False)
+        ):
+            report.error("clone mode does not confirm dock target ID rewriting")
 
-        old_waypoint_ids = set(manifest.get("id_mappings", {}).get("waypoint", {}))
-        leaked = waypoint_set & old_waypoint_ids
-        if leaked:
-            report.error(f"source waypoint IDs leaked into clone: {next(iter(leaked))}")
+        raw_waypoint_mappings = id_mappings.get("waypoint", {})
+        old_waypoint_ids = (
+            set(raw_waypoint_mappings) if isinstance(raw_waypoint_mappings, dict) else set()
+        )
+        if identity_mode == IDENTITY_MODE_PRESERVE:
+            missing_preserved = old_waypoint_ids - waypoint_set
+            if missing_preserved:
+                report.error(
+                    f"preserved source waypoint missing from graph: {next(iter(missing_preserved))}"
+                )
+        else:
+            leaked = waypoint_set & old_waypoint_ids
+            if leaked:
+                report.error(f"source waypoint IDs leaked into clone: {next(iter(leaked))}")
 
     if write_report:
         (bundle / "validation_report.json").write_text(

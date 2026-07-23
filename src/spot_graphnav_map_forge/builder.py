@@ -11,10 +11,24 @@ from .archive import BackupArchive
 from .clone import clone_edge_snapshot, clone_subgraph, clone_waypoint_snapshot
 from .geometry import load_graph
 from .planner import resolve_triggered_action_exclusions, selection_only_edge_keys
+from .remap import (
+    IDENTITY_MODE_CLONE,
+    IDENTITY_MODE_ORBIT_NATIVE,
+    IDENTITY_MODE_PRESERVE,
+    IDENTITY_MODES,
+    PRESERVABLE_ID_KINDS,
+)
 from .wire import bytes_values, decode_fields
 
 
-def build_clone(workspace: Path, plan_path: Path, out: Path) -> dict[str, object]:
+def build_clone(
+    workspace: Path,
+    plan_path: Path,
+    out: Path,
+    *,
+    identity_mode: str | None = None,
+    clone_name: str | None = None,
+) -> dict[str, object]:
     workspace = workspace.expanduser().resolve()
     plan_path = plan_path.expanduser().resolve()
     out = out.expanduser().resolve()
@@ -27,7 +41,16 @@ def build_clone(workspace: Path, plan_path: Path, out: Path) -> dict[str, object
     core = set(plan["core_waypoint_ids"])
     halo = set(plan["halo_waypoint_ids"])
     selected = core | halo
-    clone_name = plan["zone_name"]
+    plan_clone_name = str(plan["zone_name"])
+    resolved_clone_name = clone_name.strip() if clone_name is not None else plan_clone_name
+    if not resolved_clone_name:
+        raise ValueError("clone_name must not be empty")
+    clone_name_source = "build_override" if clone_name is not None else "plan"
+    plan_identity_mode = str(plan.get("identity_mode", IDENTITY_MODE_CLONE))
+    resolved_identity_mode = identity_mode or plan_identity_mode
+    if resolved_identity_mode not in IDENTITY_MODES:
+        raise ValueError("identity_mode must be one of: " + ", ".join(sorted(IDENTITY_MODES)))
+    identity_mode_source = "build_override" if identity_mode is not None else "plan"
     selection_only_keys = selection_only_edge_keys(metadata)
     selected_selection_only_keys = {
         key for key in selection_only_keys if key[0] in selected and key[1] in selected
@@ -48,8 +71,9 @@ def build_clone(workspace: Path, plan_path: Path, out: Path) -> dict[str, object
     result = clone_subgraph(
         graph,
         selected,
-        clone_name,
+        resolved_clone_name,
         excluded_edge_keys=excluded_edge_keys,
+        identity_mode=resolved_identity_mode,
     )
     snapshot_sources = metadata["snapshot_sources"]
     copied_waypoint_snapshots = 0
@@ -130,11 +154,15 @@ def build_clone(workspace: Path, plan_path: Path, out: Path) -> dict[str, object
                     new_element_id=new_element_id,
                 )
                 image_payload = archive.read(source_path)
-                image_has_source_identity = (
-                    old_element_id.encode() in image_payload
-                    or action["waypoint_id"].encode() in image_payload
-                )
-                if image_has_source_identity:
+                changed_source_tokens = [
+                    token
+                    for old_id, new_id, token in (
+                        (old_element_id, new_element_id, old_element_id.encode()),
+                        (action["waypoint_id"], new_waypoint_id, action["waypoint_id"].encode()),
+                    )
+                    if old_id != new_id and token in image_payload
+                ]
+                if changed_source_tokens:
                     raise ValueError(
                         "action image contains an identity reference requiring a schema: "
                         f"{source_path}"
@@ -168,7 +196,11 @@ def build_clone(workspace: Path, plan_path: Path, out: Path) -> dict[str, object
                         )
                     ),
                     "images": images,
-                    "clone_status": "offline_rewritten",
+                    "clone_status": (
+                        "identity_preserved"
+                        if resolved_identity_mode == IDENTITY_MODE_PRESERVE
+                        else "offline_rewritten"
+                    ),
                     "ingestion_status": "unverified",
                     "walk_export_status": "eligible",
                 }
@@ -195,9 +227,12 @@ def build_clone(workspace: Path, plan_path: Path, out: Path) -> dict[str, object
                     new_element_id=new_element_id,
                 )
                 image_payload = archive.read(source_path)
-                if (
-                    old_element_id.encode() in image_payload
-                    or old_parent_element_id.encode() in image_payload
+                if any(
+                    old_id != new_id and old_id.encode() in image_payload
+                    for old_id, new_id in (
+                        (old_element_id, new_element_id),
+                        (old_parent_element_id, new_parent_element_id),
+                    )
                 ):
                     raise ValueError(
                         "triggered AI inspection image contains an identity reference requiring a "
@@ -223,7 +258,11 @@ def build_clone(workspace: Path, plan_path: Path, out: Path) -> dict[str, object
                     "source_mission_ids": list(cloned.source_mission_ids),
                     "external_uuid_references": list(cloned.external_uuid_references),
                     "images": images,
-                    "clone_status": "offline_rewritten",
+                    "clone_status": (
+                        "identity_preserved"
+                        if resolved_identity_mode == IDENTITY_MODE_PRESERVE
+                        else "offline_rewritten"
+                    ),
                     "walk_export_status": "blocked_missing_public_trigger_link_schema",
                 }
             )
@@ -272,13 +311,52 @@ def build_clone(workspace: Path, plan_path: Path, out: Path) -> dict[str, object
                     "source_target_waypoint_ids": list(dock["target_waypoint_ids"]),
                     "new_target_waypoint_ids": list(expected_new_target_ids),
                     "cloned_target": f"dock_payloads/{payload_name}",
-                    "clone_status": "offline_rewritten",
+                    "clone_status": (
+                        "identity_preserved"
+                        if resolved_identity_mode == IDENTITY_MODE_PRESERVE
+                        else "offline_rewritten"
+                    ),
                 }
             )
 
     manifest: dict[str, object] = {
-        "schema_version": 2,
-        "clone_name": clone_name,
+        "schema_version": 3,
+        "clone_name": resolved_clone_name,
+        "identity_policy": {
+            "mode": resolved_identity_mode,
+            "source": identity_mode_source,
+            "plan_mode": plan_identity_mode,
+            "clone_name_source": clone_name_source,
+            "plan_clone_name": plan_clone_name,
+            "id_format": (
+                "spot_native_graphnav_and_uuid4_orbit_objects"
+                if resolved_identity_mode == IDENTITY_MODE_ORBIT_NATIVE
+                else "source_preserved"
+                if resolved_identity_mode == IDENTITY_MODE_PRESERVE
+                else "uuid5"
+            ),
+            "preserved_id_kinds": (
+                sorted(PRESERVABLE_ID_KINDS)
+                if resolved_identity_mode == IDENTITY_MODE_PRESERVE
+                else []
+            ),
+            "new_id_kinds": (
+                ["walk", "server_recording"]
+                if resolved_identity_mode == IDENTITY_MODE_PRESERVE
+                else [
+                    "waypoint",
+                    "waypoint_snapshot",
+                    "edge_snapshot",
+                    "site_element",
+                    "site_dock",
+                    "walk",
+                    "server_recording",
+                ]
+            ),
+            "walk_identity": "new_transport_container",
+            "recording_identity": "assigned_by_orbit_at_import",
+            "site_dock_record_transport": ("manifest_only_public_walk_dock_has_no_record_uuid"),
+        },
         "source": {
             "backup": str(source_backup),
             "site_map": metadata["site_map"],
@@ -366,8 +444,10 @@ def build_clone(workspace: Path, plan_path: Path, out: Path) -> dict[str, object
         ],
         "docks": cloned_docks,
         "docks_skipped": skipped_docks,
-        "action_payloads_rewritten": True,
-        "dock_targets_rewritten": True,
+        "action_payloads_rewritten": resolved_identity_mode != IDENTITY_MODE_PRESERVE,
+        "action_payload_identities_validated": True,
+        "dock_targets_rewritten": resolved_identity_mode != IDENTITY_MODE_PRESERVE,
+        "dock_target_identities_validated": True,
         "action_ingestion_ready": False,
         "walk_target_opaque_profile": metadata.get("walk_target_opaque_profile"),
     }

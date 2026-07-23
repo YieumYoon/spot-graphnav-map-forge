@@ -1,0 +1,579 @@
+#orbit-graph-repair-root {
+  --ogr-bg: #0b1320;
+  --ogr-panel: #101c2c;
+  --ogr-raised: #152338;
+  --ogr-border: #334155;
+  --ogr-text: #e5edf7;
+  --ogr-muted: #98a8bb;
+  --ogr-connect: #2dd4bf;
+  --ogr-delete: #fb7185;
+  --ogr-update: #fbbf24;
+  --ogr-warning: #fbbf24;
+  color: var(--ogr-text);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  pointer-events: none;
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+}
+
+#orbit-graph-repair-root *,
+#orbit-graph-repair-root *::before,
+#orbit-graph-repair-root *::after {
+  box-sizing: border-box;
+}
+
+#orbit-graph-repair-root .ogr-overlay {
+  height: 100%;
+  inset: 0;
+  overflow: visible;
+  pointer-events: none;
+  position: absolute;
+  width: 100%;
+}
+
+#orbit-graph-repair-root .ogr-panel {
+  background: color-mix(in srgb, var(--ogr-panel) 96%, transparent);
+  border: 1px solid var(--ogr-border);
+  border-radius: 10px;
+  bottom: 58px;
+  box-shadow: 0 18px 48px rgb(0 0 0 / 38%);
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 168px);
+  overflow: hidden;
+  pointer-events: auto;
+  position: absolute;
+  right: 12px;
+  top: 110px;
+  width: min(548px, calc(100vw - 24px));
+}
+
+#orbit-graph-repair-root .ogr-launch {
+  align-items: center;
+  background: var(--ogr-panel);
+  border: 1px solid var(--ogr-connect);
+  border-radius: 8px;
+  color: var(--ogr-text);
+  display: flex;
+  font: inherit;
+  font-size: 13px;
+  gap: 10px;
+  padding: 9px 12px;
+  pointer-events: auto;
+  position: absolute;
+  right: 14px;
+  top: 112px;
+}
+
+#orbit-graph-repair-root .ogr-launch-count {
+  color: var(--ogr-connect);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+#orbit-graph-repair-root .ogr-header {
+  align-items: center;
+  border-bottom: 1px solid var(--ogr-border);
+  display: flex;
+  justify-content: space-between;
+  padding: 14px 16px 12px;
+}
+
+#orbit-graph-repair-root .ogr-kicker {
+  color: var(--ogr-connect);
+  display: block;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .13em;
+}
+
+#orbit-graph-repair-root h2 {
+  color: var(--ogr-text);
+  font-size: 17px;
+  line-height: 1.2;
+  margin: 4px 0 0;
+}
+
+#orbit-graph-repair-root h2 span {
+  color: var(--ogr-connect);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+
+#orbit-graph-repair-root button,
+#orbit-graph-repair-root select,
+#orbit-graph-repair-root label {
+  font: inherit;
+}
+
+#orbit-graph-repair-root button,
+#orbit-graph-repair-root .ogr-button,
+#orbit-graph-repair-root select {
+  cursor: pointer;
+}
+
+#orbit-graph-repair-root button:focus-visible,
+#orbit-graph-repair-root select:focus-visible,
+#orbit-graph-repair-root .ogr-button:has(input:focus-visible) {
+  outline: 2px solid var(--ogr-connect);
+  outline-offset: 2px;
+}
+
+#orbit-graph-repair-root button:disabled {
+  cursor: not-allowed;
+  opacity: .4;
+}
+
+#orbit-graph-repair-root .ogr-icon-button {
+  background: transparent;
+  border: 0;
+  color: var(--ogr-muted);
+  font-size: 24px;
+  padding: 2px 6px;
+}
+
+#orbit-graph-repair-root .ogr-inspector {
+  border-bottom: 1px solid var(--ogr-border);
+  background: color-mix(in srgb, var(--ogr-bg) 42%, transparent);
+  flex: 0 1 auto;
+  min-height: 0;
+}
+
+#orbit-graph-repair-root .ogr-inspector-header {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  padding: 11px 14px 8px;
+}
+
+#orbit-graph-repair-root .ogr-inspector-header > div {
+  display: grid;
+  gap: 2px;
+}
+
+#orbit-graph-repair-root .ogr-section-kicker,
+#orbit-graph-repair-root .ogr-section-title {
+  color: var(--ogr-connect);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 8px;
+  font-weight: 750;
+  letter-spacing: .12em;
+}
+
+#orbit-graph-repair-root .ogr-inspector-header strong {
+  color: var(--ogr-text);
+  font-size: 12px;
+}
+
+#orbit-graph-repair-root .ogr-inspector-state {
+  border: 1px solid var(--ogr-border);
+  border-radius: 999px;
+  color: var(--ogr-muted);
+  font-size: 9px;
+  padding: 3px 7px;
+}
+
+#orbit-graph-repair-root .ogr-health {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 0 14px 8px;
+}
+
+#orbit-graph-repair-root .ogr-inspector-content {
+  max-height: min(310px, 38vh);
+  min-height: 54px;
+  overflow-y: auto;
+  padding: 0 8px 8px;
+}
+
+#orbit-graph-repair-root .ogr-inspector-empty,
+#orbit-graph-repair-root .ogr-inspector-cap {
+  color: var(--ogr-muted);
+  font-size: 10px;
+  line-height: 1.45;
+  margin: 0;
+  padding: 12px 6px;
+}
+
+#orbit-graph-repair-root .ogr-inspector-card {
+  background: var(--ogr-raised);
+  border: 1px solid var(--ogr-border);
+  border-radius: 7px;
+  color: var(--ogr-muted);
+  display: grid;
+  gap: 6px;
+  padding: 9px;
+}
+
+#orbit-graph-repair-root .ogr-inspector-card + .ogr-inspector-card {
+  margin-top: 6px;
+}
+
+#orbit-graph-repair-root .ogr-inspector-card > strong {
+  color: var(--ogr-text);
+  font-size: 12px;
+}
+
+#orbit-graph-repair-root .ogr-inspector-card > code {
+  white-space: pre-wrap;
+}
+
+#orbit-graph-repair-root .ogr-inspector-details {
+  border-top: 1px solid color-mix(in srgb, var(--ogr-border) 70%, transparent);
+  display: grid;
+  gap: 4px;
+  padding-top: 6px;
+}
+
+#orbit-graph-repair-root .ogr-inspector-detail {
+  align-items: start;
+  display: grid;
+  font-size: 9px;
+  gap: 8px;
+  grid-template-columns: 82px minmax(0, 1fr);
+}
+
+#orbit-graph-repair-root .ogr-inspector-detail > span:first-child {
+  color: var(--ogr-muted);
+}
+
+#orbit-graph-repair-root .ogr-inspector-detail > span:last-child,
+#orbit-graph-repair-root .ogr-inspector-detail > code {
+  color: var(--ogr-text);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+#orbit-graph-repair-root .ogr-section-title {
+  border-bottom: 1px solid var(--ogr-border);
+  color: var(--ogr-muted);
+  padding: 8px 14px 6px;
+}
+
+#orbit-graph-repair-root .ogr-import-row,
+#orbit-graph-repair-root .ogr-stepper,
+#orbit-graph-repair-root .ogr-action-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+#orbit-graph-repair-root .ogr-import-row {
+  flex-wrap: wrap;
+  padding: 12px 14px 8px;
+}
+
+#orbit-graph-repair-root .ogr-baseline-summary {
+  color: var(--ogr-muted);
+  font-size: 10px;
+  line-height: 1.45;
+  min-height: 30px;
+  padding: 0 14px 10px;
+}
+
+#orbit-graph-repair-root .ogr-visualization-actions {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  padding: 0 14px 12px;
+}
+
+#orbit-graph-repair-root .ogr-visualization-actions[hidden] {
+  display: none;
+}
+
+#orbit-graph-repair-root .ogr-visualization-actions > span {
+  color: var(--ogr-muted);
+  font-size: 9px;
+  line-height: 1.35;
+}
+
+#orbit-graph-repair-root .ogr-delete-visualization {
+  border-color: color-mix(in srgb, var(--ogr-delete) 65%, var(--ogr-border));
+  color: var(--ogr-delete);
+  flex: 0 0 auto;
+}
+
+#orbit-graph-repair-root .ogr-delete-visualization[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--ogr-delete) 18%, var(--ogr-raised));
+  border-color: var(--ogr-delete);
+}
+
+#orbit-graph-repair-root .ogr-cut-card {
+  border-color: color-mix(in srgb, var(--ogr-warning) 25%, transparent);
+}
+
+#orbit-graph-repair-root .ogr-button {
+  align-items: center;
+  background: var(--ogr-raised);
+  border: 1px solid var(--ogr-border);
+  border-radius: 6px;
+  color: var(--ogr-text);
+  display: inline-flex;
+  font-size: 11px;
+  font-weight: 650;
+  justify-content: center;
+  min-height: 32px;
+  padding: 7px 11px;
+}
+
+#orbit-graph-repair-root .ogr-primary,
+#orbit-graph-repair-root .ogr-focus {
+  border-color: color-mix(in srgb, var(--ogr-connect) 65%, var(--ogr-border));
+  color: var(--ogr-connect);
+}
+
+#orbit-graph-repair-root .ogr-connect-draft {
+  background: color-mix(in srgb, var(--ogr-connect) 14%, var(--ogr-raised));
+  border-color: var(--ogr-connect);
+  color: var(--ogr-connect);
+}
+
+#orbit-graph-repair-root .ogr-archive-draft {
+  background: color-mix(in srgb, var(--ogr-delete) 12%, var(--ogr-raised));
+  border-color: var(--ogr-delete);
+  color: var(--ogr-delete);
+}
+
+#orbit-graph-repair-root .ogr-settings-draft {
+  background: color-mix(in srgb, var(--ogr-update) 12%, var(--ogr-raised));
+  border-color: var(--ogr-update);
+  color: var(--ogr-update);
+}
+
+#orbit-graph-repair-root .ogr-status {
+  color: var(--ogr-muted);
+  font-size: 11px;
+  line-height: 1.45;
+  margin: 0;
+  min-height: 30px;
+  padding: 3px 14px 10px;
+}
+
+#orbit-graph-repair-root .ogr-status[data-kind="ok"] {
+  color: var(--ogr-connect);
+}
+
+#orbit-graph-repair-root .ogr-status[data-kind="error"] {
+  color: var(--ogr-delete);
+}
+
+#orbit-graph-repair-root .ogr-controls {
+  align-items: end;
+  border-top: 1px solid var(--ogr-border);
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  padding: 10px 14px;
+}
+
+#orbit-graph-repair-root .ogr-controls[hidden] {
+  display: none;
+}
+
+#orbit-graph-repair-root .ogr-bulk-actions {
+  align-items: center;
+  border-top: 1px solid var(--ogr-border);
+  display: flex;
+  gap: 10px;
+  padding: 10px 14px;
+}
+
+#orbit-graph-repair-root .ogr-bulk-actions[hidden] {
+  display: none;
+}
+
+#orbit-graph-repair-root .ogr-bulk-actions > span {
+  color: var(--ogr-muted);
+  font-size: 9px;
+  line-height: 1.35;
+}
+
+#orbit-graph-repair-root .ogr-bulk-archive {
+  flex: 0 0 auto;
+}
+
+#orbit-graph-repair-root .ogr-controls label {
+  color: var(--ogr-muted);
+  display: grid;
+  font-size: 9px;
+  gap: 5px;
+  min-width: 190px;
+}
+
+#orbit-graph-repair-root select {
+  appearance: auto;
+  background: var(--ogr-raised);
+  border: 1px solid var(--ogr-border);
+  border-radius: 6px;
+  color: var(--ogr-text);
+  min-height: 32px;
+  padding: 4px 8px;
+}
+
+#orbit-graph-repair-root .ogr-summary {
+  border-bottom: 1px solid var(--ogr-border);
+  border-top: 1px solid var(--ogr-border);
+  color: var(--ogr-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 9px;
+  min-height: 30px;
+  padding: 9px 14px;
+}
+
+#orbit-graph-repair-root .ogr-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+#orbit-graph-repair-root .ogr-empty {
+  color: var(--ogr-muted);
+  font-size: 12px;
+  padding: 28px 12px;
+  text-align: center;
+}
+
+#orbit-graph-repair-root .ogr-action {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  color: var(--ogr-muted);
+  display: grid;
+  gap: 5px;
+  padding: 10px;
+}
+
+#orbit-graph-repair-root .ogr-action + .ogr-action {
+  margin-top: 4px;
+}
+
+#orbit-graph-repair-root .ogr-action:hover {
+  background: var(--ogr-raised);
+  border-color: var(--ogr-border);
+}
+
+#orbit-graph-repair-root .ogr-action[data-selected="true"] {
+  background: color-mix(in srgb, var(--ogr-delete) 9%, var(--ogr-raised));
+  border-color: color-mix(in srgb, var(--ogr-delete) 55%, var(--ogr-border));
+}
+
+#orbit-graph-repair-root .ogr-action[data-selected="true"][data-operation="connect"] {
+  background: color-mix(in srgb, var(--ogr-connect) 9%, var(--ogr-raised));
+  border-color: color-mix(in srgb, var(--ogr-connect) 55%, var(--ogr-border));
+}
+
+#orbit-graph-repair-root .ogr-action[data-selected="true"][data-operation="update"] {
+  background: color-mix(in srgb, var(--ogr-update) 9%, var(--ogr-raised));
+  border-color: color-mix(in srgb, var(--ogr-update) 55%, var(--ogr-border));
+}
+
+#orbit-graph-repair-root .ogr-action[data-done="true"] {
+  opacity: .58;
+}
+
+#orbit-graph-repair-root .ogr-action-top {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+#orbit-graph-repair-root .ogr-badge {
+  border: 1px solid var(--ogr-border);
+  border-radius: 999px;
+  color: var(--ogr-muted);
+  font-size: 8px;
+  font-weight: 750;
+  letter-spacing: .04em;
+  padding: 2px 5px;
+  text-transform: uppercase;
+}
+
+#orbit-graph-repair-root .ogr-connect,
+#orbit-graph-repair-root .ogr-done {
+  border-color: color-mix(in srgb, var(--ogr-connect) 60%, var(--ogr-border));
+  color: var(--ogr-connect);
+}
+
+#orbit-graph-repair-root .ogr-delete {
+  border-color: color-mix(in srgb, var(--ogr-delete) 60%, var(--ogr-border));
+  color: var(--ogr-delete);
+}
+
+#orbit-graph-repair-root .ogr-update {
+  border-color: color-mix(in srgb, var(--ogr-update) 60%, var(--ogr-border));
+  color: var(--ogr-update);
+}
+
+#orbit-graph-repair-root .ogr-warning {
+  border-color: color-mix(in srgb, var(--ogr-warning) 60%, var(--ogr-border));
+  color: var(--ogr-warning);
+}
+
+#orbit-graph-repair-root .ogr-action strong {
+  color: var(--ogr-text);
+  font-size: 12px;
+}
+
+#orbit-graph-repair-root .ogr-sessions,
+#orbit-graph-repair-root code {
+  font-size: 9px;
+  overflow-wrap: anywhere;
+}
+
+#orbit-graph-repair-root code {
+  color: var(--ogr-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+#orbit-graph-repair-root .ogr-action-buttons {
+  margin-top: 4px;
+}
+
+#orbit-graph-repair-root .ogr-footer {
+  border-top: 1px solid var(--ogr-border);
+  color: var(--ogr-muted);
+  font-size: 9px;
+  line-height: 1.4;
+  padding: 9px 14px;
+}
+
+@media (max-width: 760px) {
+  #orbit-graph-repair-root .ogr-panel {
+    left: 8px;
+    right: 8px;
+    width: auto;
+  }
+
+  #orbit-graph-repair-root .ogr-controls {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  #orbit-graph-repair-root .ogr-bulk-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  #orbit-graph-repair-root .ogr-visualization-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  #orbit-graph-repair-root .ogr-stepper .ogr-button {
+    flex: 1;
+  }
+
+  #orbit-graph-repair-root .ogr-inspector-content {
+    max-height: 34vh;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #orbit-graph-repair-root * {
+    scroll-behavior: auto !important;
+  }
+}

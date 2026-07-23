@@ -1,0 +1,35 @@
+{
+  "manifest_version": 3,
+  "name": "Orbit Site Map Assistant",
+  "description": "Compares a B0 GraphNav baseline with Orbit and creates native graph and edge-settings drafts.",
+  "version": "0.8.1",
+  "permissions": [
+    "storage",
+    "unlimitedStorage"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*/control_room/maps/*/edit*"
+      ],
+      "css": [
+        "panel.css"
+      ],
+      "js": [
+        "baseline.js",
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "page-bridge.js"
+      ],
+      "matches": [
+        "https://*/*"
+      ]
+    }
+  ]
+}

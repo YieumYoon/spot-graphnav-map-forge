@@ -2,6 +2,7 @@ import io
 import json
 import struct
 import tarfile
+import uuid
 
 from bosdyn.api.autowalk import walks_pb2
 from bosdyn.api.graph_nav import map_pb2
@@ -103,6 +104,15 @@ def test_clone_site_element_rewrites_top_level_and_nested_identity_tokens() -> N
     assert cloned_relocalize.set_localization_request.initial_guess.waypoint_id == new_waypoint
 
 
+def test_clone_site_element_can_preserve_element_and_waypoint_identity_byte_exactly() -> None:
+    payload = _site_element_payload(SOURCE_ELEMENT_ID, SOURCE_WAYPOINT_ID, SOURCE_MISSION_ID)
+
+    preserved = clone_site_element(payload, SOURCE_ELEMENT_ID, SOURCE_WAYPOINT_ID)
+
+    assert preserved.payload == payload
+    assert preserved.replacement_counts == {"element_id": 0, "waypoint_id": 0}
+
+
 def test_clone_triggered_site_element_rewrites_inspection_and_parent_ids() -> None:
     old_inspection = "11111111-1111-4111-8111-111111111111"
     old_parent = "22222222-2222-4222-8222-222222222222"
@@ -135,6 +145,25 @@ def test_clone_triggered_site_element_rewrites_inspection_and_parent_ids() -> No
     assert mission.encode() in cloned.payload
     assert cloned.source_mission_ids == (mission,)
     assert cloned.external_uuid_references == ()
+
+
+def test_clone_triggered_site_element_can_preserve_shared_identity_byte_exactly() -> None:
+    inspection_id = "11111111-1111-4111-8111-111111111111"
+    parent_id = "22222222-2222-4222-8222-222222222222"
+    trigger_source = _length_delimited(1, parent_id.encode()) + _length_delimited(
+        2, b"spot-cam-ptz"
+    )
+    payload = _length_delimited(1, inspection_id.encode()) + _length_delimited(
+        14, _length_delimited(1, trigger_source)
+    )
+
+    preserved = clone_triggered_site_element(payload, inspection_id, parent_id)
+
+    assert preserved.payload == payload
+    assert preserved.replacement_counts == {
+        "element_id": 0,
+        "trigger_parent_element_id": 0,
+    }
 
 
 def test_builder_emits_valid_rewritten_action_bundle(tmp_path) -> None:
@@ -212,6 +241,35 @@ def test_builder_emits_valid_rewritten_action_bundle(tmp_path) -> None:
     assert report.counts["actions_cloned"] == 1
     assert report.counts["actions_with_external_uuid_references"] == 1
     assert report.counts["explicit_relocalizations_cloned"] == 1
+
+    native_bundle = tmp_path / "native-bundle"
+    native_manifest = build_clone(
+        workspace,
+        plan_path,
+        native_bundle,
+        identity_mode="orbit-native",
+    )
+    native_action = native_manifest["actions"][0]
+    assert native_manifest["identity_policy"]["id_format"] == (
+        "spot_native_graphnav_and_uuid4_orbit_objects"
+    )
+    assert uuid.UUID(native_action["new_element_id"]).version == 4
+    assert native_action["new_waypoint_id"].startswith("mapped-waypoint-")
+    assert validate_bundle(native_bundle, write_report=False).valid
+
+    preserved_bundle = tmp_path / "preserved-bundle"
+    preserved_manifest = build_clone(
+        workspace,
+        plan_path,
+        preserved_bundle,
+        identity_mode="preserve",
+    )
+    preserved_action = preserved_manifest["actions"][0]
+    assert preserved_action["new_element_id"] == old_element
+    assert preserved_action["new_waypoint_id"] == old_waypoint
+    assert preserved_action["clone_status"] == "identity_preserved"
+    assert (preserved_bundle / preserved_action["cloned_payload"]).read_bytes() == payload
+    assert validate_bundle(preserved_bundle, write_report=False).valid
 
     payload_path = bundle / action["cloned_payload"]
     leaked_payload = cloned_payload.replace(
@@ -436,6 +494,21 @@ def test_builder_clones_complete_dock_and_reports_boundary_skip(tmp_path) -> Non
     assert target.navigate_to.destination_waypoint_id == dock["new_target_waypoint_ids"][0]
     assert prep_waypoint_id.encode() not in target.SerializeToString()
     assert validate_bundle(bundle, write_report=False).valid
+
+    preserved_bundle = tmp_path / "preserved-dock-bundle"
+    preserved_manifest = build_clone(
+        workspace,
+        full_plan,
+        preserved_bundle,
+        identity_mode="preserve",
+    )
+    preserved_dock = preserved_manifest["docks"][0]
+    preserved_target = walks_pb2.Target.FromString(
+        (preserved_bundle / preserved_dock["cloned_target"]).read_bytes()
+    )
+    assert preserved_dock["new_record_id"] == dock_record_id
+    assert preserved_target.navigate_to.destination_waypoint_id == prep_waypoint_id
+    assert validate_bundle(preserved_bundle, write_report=False).valid
 
     boundary_plan = workspace / "boundary.plan.json"
     boundary_plan.write_text(

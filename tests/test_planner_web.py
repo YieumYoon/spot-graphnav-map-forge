@@ -3,8 +3,10 @@ import json
 import pytest
 from bosdyn.api.graph_nav import map_pb2
 
+from spot_graphnav_map_forge.cli import main
 from spot_graphnav_map_forge.planner import create_plan
-from spot_graphnav_map_forge.web import build_workspace_payload, save_plan
+from spot_graphnav_map_forge.reconnect import build_reconnect_inventory
+from spot_graphnav_map_forge.web import EditorServer, build_workspace_payload, save_plan
 
 
 def _workspace(tmp_path):
@@ -175,6 +177,96 @@ def test_create_plan_and_workspace_payload(tmp_path) -> None:
     assert payload["counts"]["unanchored_waypoints"] == 0
     assert payload["waypoints"][2]["actions"] == 1
     assert payload["edges"][1]["transport"] == "selection_only"
+    assert payload["counts"]["manual_edges"] == 1
+    assert payload["counts"]["manual_field_3_edges"] == 0
+    assert payload["counts"]["manual_local_frame_edges"] == 0
+    assert payload["manual_edges"] == [
+        {
+            "index": 1,
+            "graph_index": 0,
+            "from": "wp-0",
+            "to": "wp-1",
+            "from_name": "",
+            "to_name": "",
+            "from_session": "",
+            "to_session": "",
+            "cross_session_label": False,
+            "from_x": 0.0,
+            "from_y": 0.0,
+            "to_x": 1.0,
+            "to_y": 0.0,
+            "from_coordinate_source": "graph_anchor",
+            "to_coordinate_source": "graph_anchor",
+            "coordinate_scope": "map",
+            "distance": 1.0,
+            "snapshot_id": "",
+            "transport": "walk",
+            "field_3": False,
+        }
+    ]
+
+
+def test_reconnect_inventory_is_read_only_and_cli_writable(tmp_path) -> None:
+    workspace = _workspace(tmp_path)
+
+    inventory = build_reconnect_inventory(workspace)
+
+    assert inventory["kind"] == "orbit_manual_edge_reconnect_inventory"
+    assert inventory["sensitivity"] == "private_operational_data_do_not_commit"
+    assert inventory["counts"] == {
+        "waypoints": 3,
+        "edges": 2,
+        "manual_edges": 1,
+        "manual_endpoint_waypoints": 2,
+        "manual_cross_session_edges": 0,
+        "manual_field_3_edges": 0,
+        "manual_local_frame_edges": 0,
+    }
+    assert inventory["manual_endpoint_waypoint_ids"] == ["wp-0", "wp-1"]
+    waypoints = {row["id"]: row for row in inventory["waypoints"]}
+    assert waypoints["wp-0"]["snapshot_id"] == ""
+    assert waypoints["wp-0"]["incident_edges"] == [
+        {
+            "direction": "out",
+            "neighbor_waypoint_id": "wp-1",
+            "source": "EDGE_SOURCE_USER_REQUEST",
+            "transport": "walk",
+        }
+    ]
+
+    output = tmp_path / "private" / "manual-edge-inventory.json"
+    assert main(["edge-inventory", str(workspace), "--out", str(output)]) == 0
+    written = json.loads(output.read_text(encoding="utf-8"))
+    assert written["counts"] == inventory["counts"]
+
+
+def test_editor_server_loads_only_graph_reconciliation_guides(tmp_path) -> None:
+    workspace = _workspace(tmp_path)
+    guide_path = tmp_path / "guide.json"
+    guide = {
+        "kind": "orbit_graph_reconciliation_guide",
+        "before_site_map": {"id": "map-1", "name": "Test Map"},
+        "graph_reconciled": True,
+        "counts": {"intentional_cut_edges": 0},
+        "actions": [],
+    }
+    guide_path.write_text(json.dumps(guide), encoding="utf-8")
+
+    server = EditorServer(("127.0.0.1", 0), workspace, guide_path)
+    try:
+        payload = json.loads(server.workspace_payload)
+    finally:
+        server.server_close()
+    assert payload["reconciliation"] == guide
+
+    guide_path.write_text(json.dumps({"kind": "other"}), encoding="utf-8")
+    with pytest.raises(ValueError, match="not a graph reconciliation guide"):
+        EditorServer(("127.0.0.1", 0), workspace, guide_path)
+
+    guide["before_site_map"] = {"id": "another-map"}
+    guide_path.write_text(json.dumps(guide), encoding="utf-8")
+    with pytest.raises(ValueError, match="baseline does not match"):
+        EditorServer(("127.0.0.1", 0), workspace, guide_path)
 
 
 def test_save_plan_requires_explicit_overwrite(tmp_path) -> None:
