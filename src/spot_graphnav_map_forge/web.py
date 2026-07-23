@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from collections import Counter
 from http import HTTPStatus
@@ -52,6 +53,61 @@ def build_workspace_payload(workspace: Path) -> dict[str, object]:
     edge_source_enum = map_pb2.Edge.Annotations.DESCRIPTOR.fields_by_name["edge_source"].enum_type
     edge_source_names = {value.number: value.name for value in edge_source_enum.values}
     selection_only_keys = selection_only_edge_keys(metadata)
+    waypoint_by_id = {waypoint.id: waypoint for waypoint in graph.waypoints}
+
+    manual_edges: list[dict[str, object]] = []
+    for index, edge in enumerate(graph.edges):
+        source_name = edge_source_names.get(
+            edge.annotations.edge_source, str(edge.annotations.edge_source)
+        )
+        if source_name != "EDGE_SOURCE_USER_REQUEST":
+            continue
+        source_id = edge.id.from_waypoint
+        target_id = edge.id.to_waypoint
+        source_coordinate = coordinates.get(source_id)
+        target_coordinate = coordinates.get(target_id)
+        if source_coordinate is None or target_coordinate is None:
+            raise ValueError(
+                f"manual edge endpoint is absent from map view: {source_id} -> {target_id}"
+            )
+        source_waypoint = waypoint_by_id[source_id]
+        target_waypoint = waypoint_by_id[target_id]
+        source_session = source_waypoint.annotations.client_metadata.session_name
+        target_session = target_waypoint.annotations.client_metadata.session_name
+        transport = "selection_only" if (source_id, target_id) in selection_only_keys else "walk"
+        coordinate_scope = (
+            "local_frame"
+            if "waypoint_tform_ko_unanchored"
+            in {source_coordinate.source, target_coordinate.source}
+            else "map"
+        )
+        manual_edges.append(
+            {
+                "index": len(manual_edges) + 1,
+                "graph_index": index,
+                "from": source_id,
+                "to": target_id,
+                "from_name": source_waypoint.annotations.name,
+                "to_name": target_waypoint.annotations.name,
+                "from_session": source_session,
+                "to_session": target_session,
+                "cross_session_label": source_session != target_session,
+                "from_x": source_coordinate.x,
+                "from_y": source_coordinate.y,
+                "to_x": target_coordinate.x,
+                "to_y": target_coordinate.y,
+                "from_coordinate_source": source_coordinate.source,
+                "to_coordinate_source": target_coordinate.source,
+                "coordinate_scope": coordinate_scope,
+                "distance": math.hypot(
+                    target_coordinate.x - source_coordinate.x,
+                    target_coordinate.y - source_coordinate.y,
+                ),
+                "snapshot_id": edge.snapshot_id,
+                "transport": transport,
+                "field_3": transport == "selection_only",
+            }
+        )
 
     return {
         "site_map": metadata["site_map"],
@@ -63,6 +119,11 @@ def build_workspace_payload(workspace: Path) -> dict[str, object]:
                 coordinate.source == "waypoint_tform_ko_unanchored"
                 for coordinate in coordinates.values()
             ),
+            "manual_edges": len(manual_edges),
+            "manual_field_3_edges": sum(bool(edge["field_3"]) for edge in manual_edges),
+            "manual_local_frame_edges": sum(
+                edge["coordinate_scope"] == "local_frame" for edge in manual_edges
+            ),
         },
         "component_sizes": [len(component) for component in components],
         "waypoints": [
@@ -73,6 +134,11 @@ def build_workspace_payload(workspace: Path) -> dict[str, object]:
                 "source": coordinate.source,
                 "component": component_by_waypoint[waypoint_id],
                 "actions": action_counts[waypoint_id],
+                "name": waypoint_by_id[waypoint_id].annotations.name,
+                "snapshot_id": waypoint_by_id[waypoint_id].snapshot_id,
+                "session_name": waypoint_by_id[
+                    waypoint_id
+                ].annotations.client_metadata.session_name,
             }
             for waypoint_id, coordinate in coordinates.items()
         ],
@@ -101,6 +167,7 @@ def build_workspace_payload(workspace: Path) -> dict[str, object]:
             }
             for action in action_rows
         ],
+        "manual_edges": manual_edges,
         "selection_dependency_waypoint_ids": sorted(selection_dependency_waypoint_ids(metadata)),
         "edge_transport": metadata.get("edge_transport", {}),
     }
@@ -134,6 +201,7 @@ def save_plan(workspace: Path, request: dict[str, Any]) -> tuple[Path, dict[str,
             request.get("exclude_dependency_free_components", False)
         ),
         include_selection_only_edges=bool(request.get("include_selection_only_edges", False)),
+        identity_mode=str(request.get("identity_mode", "clone")),
     )
     plans_dir = workspace / "plans"
     plans_dir.mkdir(parents=True, exist_ok=True)
@@ -149,11 +217,46 @@ def save_plan(workspace: Path, request: dict[str, Any]) -> tuple[Path, dict[str,
 
 
 class EditorServer(ThreadingHTTPServer):
-    def __init__(self, address: tuple[str, int], workspace: Path):
+    def __init__(
+        self,
+        address: tuple[str, int],
+        workspace: Path,
+        reconciliation: Path | None = None,
+    ):
+        workspace_path = workspace.expanduser().resolve()
+        payload = build_workspace_payload(workspace_path)
+        if reconciliation is not None:
+            reconciliation_path = reconciliation.expanduser().resolve()
+            guide = json.loads(reconciliation_path.read_text(encoding="utf-8"))
+            if (
+                not isinstance(guide, dict)
+                or guide.get("kind") != "orbit_graph_reconciliation_guide"
+            ):
+                raise ValueError("reconciliation file is not a graph reconciliation guide")
+            baseline = guide.get("before_site_map")
+            if not isinstance(baseline, dict) or baseline.get("id") != payload["site_map"]["id"]:
+                raise ValueError("reconciliation baseline does not match the workspace Site Map")
+            actions = guide.get("actions")
+            if not isinstance(actions, list):
+                raise ValueError("reconciliation guide has no action list")
+            waypoint_ids = {row["id"] for row in payload["waypoints"]}
+            for action in actions:
+                if (
+                    not isinstance(action, dict)
+                    or action.get("operation") not in {"connect", "delete"}
+                    or action.get("from") not in waypoint_ids
+                    or action.get("to") not in waypoint_ids
+                ):
+                    raise ValueError(
+                        "reconciliation action is invalid or references an unknown waypoint"
+                    )
+            payload["reconciliation"] = guide
+        else:
+            payload["reconciliation"] = None
         super().__init__(address, EditorRequestHandler)
-        self.workspace = workspace.expanduser().resolve()
+        self.workspace = workspace_path
         self.workspace_payload = json.dumps(
-            build_workspace_payload(self.workspace),
+            payload,
             ensure_ascii=False,
             separators=(",", ":"),
         ).encode("utf-8")
@@ -230,8 +333,14 @@ class EditorRequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(payload)
 
 
-def serve_editor(workspace: Path, host: str, port: int) -> None:
-    server = EditorServer((host, port), workspace)
+def serve_editor(
+    workspace: Path,
+    host: str,
+    port: int,
+    *,
+    reconciliation: Path | None = None,
+) -> None:
+    server = EditorServer((host, port), workspace, reconciliation)
     actual_host, actual_port = server.server_address[:2]
     print(f"Map Forge editor: http://{actual_host}:{actual_port}")
     print("Press Ctrl-C to stop. No server import APIs are enabled.")

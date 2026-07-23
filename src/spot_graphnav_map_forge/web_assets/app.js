@@ -26,6 +26,24 @@ const elements = {
   undo: $("#undo-point"),
   clear: $("#clear-polygon"),
   fit: $("#fit-map"),
+  manualEdges: $("#tool-manual-edges"),
+  manualEdgePanel: $("#manual-edge-panel"),
+  manualEdgeClose: $("#manual-edge-close"),
+  manualEdgeCount: $("#manual-edge-count"),
+  manualEdgeSearch: $("#manual-edge-search"),
+  manualEdgeFilter: $("#manual-edge-filter"),
+  manualEdgeSummary: $("#manual-edge-summary"),
+  manualEdgeList: $("#manual-edge-list"),
+  manualEdgeDownload: $("#manual-edge-download"),
+  reconciliation: $("#tool-reconciliation"),
+  reconciliationToolbarCount: $("#reconciliation-toolbar-count"),
+  reconciliationPanel: $("#reconciliation-panel"),
+  reconciliationClose: $("#reconciliation-close"),
+  reconciliationCount: $("#reconciliation-count"),
+  reconciliationFilter: $("#reconciliation-filter"),
+  reconciliationSummary: $("#reconciliation-summary"),
+  reconciliationList: $("#reconciliation-list"),
+  reconciliationDownload: $("#reconciliation-download"),
   theme: $("#theme-toggle"),
   stats: {
     core: $("#stat-core"),
@@ -69,6 +87,10 @@ const state = {
   renderPending: false,
   overwritePending: false,
   toastTimer: null,
+  manualEdgePanelOpen: false,
+  focusedManualEdge: null,
+  reconciliationPanelOpen: false,
+  focusedReconciliation: null,
 };
 
 const context = elements.canvas.getContext("2d", { alpha: false });
@@ -217,6 +239,101 @@ function drawEdges() {
   context.setLineDash([]);
 }
 
+function drawFocusedManualEdge() {
+  const edge = state.focusedManualEdge;
+  if (!edge) return;
+  const from = state.waypointById.get(edge.from);
+  const to = state.waypointById.get(edge.to);
+  if (!from || !to || !visibleWaypoint(from) || !visibleWaypoint(to)) return;
+  const [x1, y1] = worldToScreen(from);
+  const [x2, y2] = worldToScreen(to);
+
+  context.lineCap = "round";
+  context.strokeStyle = css("--canvas");
+  context.lineWidth = 8;
+  context.beginPath();
+  context.moveTo(x1, y1);
+  context.lineTo(x2, y2);
+  context.stroke();
+  context.strokeStyle = css("--danger");
+  context.lineWidth = 3;
+  context.beginPath();
+  context.moveTo(x1, y1);
+  context.lineTo(x2, y2);
+  context.stroke();
+
+  for (const [x, y, label] of [[x1, y1, "A"], [x2, y2, "B"]]) {
+    context.fillStyle = css("--canvas");
+    context.strokeStyle = css("--danger");
+    context.lineWidth = 2;
+    context.beginPath();
+    context.arc(x, y, 8, 0, Math.PI * 2);
+    context.fill();
+    context.stroke();
+    context.fillStyle = css("--text");
+    context.font = "700 9px Fira Code, ui-monospace, monospace";
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.fillText(label, x, y + 0.5);
+  }
+  context.lineCap = "butt";
+}
+
+function drawFocusedReconciliation() {
+  const action = state.focusedReconciliation;
+  if (!action) return;
+  const from = state.waypointById.get(action.from);
+  const to = state.waypointById.get(action.to);
+  if (!from || !to || !visibleWaypoint(from) || !visibleWaypoint(to)) return;
+  const [x1, y1] = worldToScreen(from);
+  const [x2, y2] = worldToScreen(to);
+  const color = action.operation === "connect" ? css("--primary") : css("--danger");
+
+  context.lineCap = "round";
+  context.strokeStyle = css("--canvas");
+  context.lineWidth = 10;
+  context.beginPath();
+  context.moveTo(x1, y1);
+  context.lineTo(x2, y2);
+  context.stroke();
+  context.strokeStyle = color;
+  context.lineWidth = 3.5;
+  context.setLineDash(action.operation === "connect" ? [9, 5] : []);
+  context.beginPath();
+  context.moveTo(x1, y1);
+  context.lineTo(x2, y2);
+  context.stroke();
+  context.setLineDash([]);
+
+  for (const [x, y, label] of [[x1, y1, "A"], [x2, y2, "B"]]) {
+    context.fillStyle = css("--canvas");
+    context.strokeStyle = color;
+    context.lineWidth = 3;
+    context.beginPath();
+    context.arc(x, y, 10, 0, Math.PI * 2);
+    context.fill();
+    context.stroke();
+    context.fillStyle = css("--text");
+    context.font = "700 9px Fira Code, ui-monospace, monospace";
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.fillText(label, x, y + 0.5);
+  }
+
+  const label = action.operation === "connect" ? "CONNECT" : "DELETE";
+  const centerX = (x1 + x2) / 2;
+  const centerY = (y1 + y2) / 2;
+  context.font = "700 10px Fira Code, ui-monospace, monospace";
+  const textWidth = context.measureText(label).width;
+  context.fillStyle = css("--canvas");
+  context.fillRect(centerX - textWidth / 2 - 5, centerY - 19, textWidth + 10, 16);
+  context.fillStyle = color;
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.fillText(label, centerX, centerY - 11);
+  context.lineCap = "butt";
+}
+
 function drawWaypoints() {
   for (const waypoint of state.data.waypoints) {
     if (!visibleWaypoint(waypoint)) continue;
@@ -299,6 +416,8 @@ function render() {
   drawEdges();
   drawWaypoints();
   drawPolygon();
+  drawFocusedManualEdge();
+  drawFocusedReconciliation();
 }
 
 function pointInPolygon(point, polygon) {
@@ -452,6 +571,7 @@ function updateStats(selectedEdges, selectionOnlyCount, walkComponentCount, acti
   elements.selectionState.textContent = ready ? "READY" : "NO POLYGON";
   elements.selectionState.classList.toggle("ready", ready);
   updateSaveState();
+  renderManualEdges();
 }
 
 function updateSaveState() {
@@ -490,6 +610,288 @@ function buildIndexes() {
       state.walkAdjacency.get(edge.to).add(edge.from);
     }
   }
+}
+
+function manualEdgeSelectionStatus(edge) {
+  if (state.polygon.length < 3) return "source";
+  const fromSelected = state.core.has(edge.from) || state.halo.has(edge.from);
+  const toSelected = state.core.has(edge.to) || state.halo.has(edge.to);
+  if (fromSelected && toSelected) return "internal";
+  if (fromSelected || toSelected) return "boundary";
+  return "outside";
+}
+
+function manualEdgeEndpointLabel(edge, side) {
+  return edge[`${side}_name`] || edge[side];
+}
+
+function renderManualEdges() {
+  if (!state.data) return;
+  const edges = state.data.manual_edges || [];
+  elements.manualEdgeCount.textContent = edges.length.toLocaleString();
+  const statuses = { internal: 0, boundary: 0, outside: 0, source: 0 };
+  for (const edge of edges) statuses[manualEdgeSelectionStatus(edge)] += 1;
+  const field3Count = edges.filter((edge) => edge.field_3).length;
+  const localFrameCount = edges.filter((edge) => edge.coordinate_scope === "local_frame").length;
+  elements.manualEdgeSummary.textContent = state.polygon.length >= 3
+    ? `${statuses.internal} internal · ${statuses.boundary} boundary · ${statuses.outside} outside · ${field3Count} field 3 · ${localFrameCount} local-frame`
+    : `${edges.length} source edges · draw a polygon for boundary status · ${field3Count} field 3 · ${localFrameCount} local-frame`;
+
+  const query = elements.manualEdgeSearch.value.trim().toLocaleLowerCase();
+  const filter = elements.manualEdgeFilter.value;
+  const filtered = edges.filter((edge) => {
+    const status = manualEdgeSelectionStatus(edge);
+    if (filter === "field3" && !edge.field_3) return false;
+    if (!["all", "field3"].includes(filter) && status !== filter) return false;
+    if (!query) return true;
+    return [
+      edge.from,
+      edge.to,
+      edge.from_name,
+      edge.to_name,
+      edge.from_session,
+      edge.to_session,
+    ].some((value) => String(value || "").toLocaleLowerCase().includes(query));
+  });
+
+  if (!filtered.length) {
+    elements.manualEdgeList.innerHTML = '<p class="manual-edge-empty">No manual edges match this filter.</p>';
+    return;
+  }
+  elements.manualEdgeList.innerHTML = filtered.map((edge) => {
+    const status = manualEdgeSelectionStatus(edge);
+    const fromLabel = manualEdgeEndpointLabel(edge, "from");
+    const toLabel = manualEdgeEndpointLabel(edge, "to");
+    const sessionText = edge.from_session || edge.to_session
+      ? `${edge.from_session || "—"} → ${edge.to_session || "—"}`
+      : "No session labels";
+    const active = state.focusedManualEdge?.index === edge.index ? " active" : "";
+    return `<button class="manual-edge-item${active}" type="button" data-manual-edge-index="${edge.index}" title="${escapeHtml(`${edge.from} → ${edge.to}`)}">
+      <span class="manual-edge-item-top">
+        <span class="manual-edge-number">#${String(edge.index).padStart(3, "0")}</span>
+        <span class="manual-edge-badge ${status}">${status}</span>
+        ${edge.field_3 ? '<span class="manual-edge-badge field3">field 3</span>' : ""}
+        ${edge.coordinate_scope === "local_frame" ? '<span class="manual-edge-badge local-frame" title="At least one endpoint lacks a shared map-frame coordinate">local frame</span>' : ""}
+      </span>
+      <strong>${escapeHtml(fromLabel)} → ${escapeHtml(toLabel)}</strong>
+      <small>${escapeHtml(sessionText)} · ${Number(edge.distance).toFixed(2)} m</small>
+      <code>${escapeHtml(edge.from)} → ${escapeHtml(edge.to)}</code>
+    </button>`;
+  }).join("");
+}
+
+function setManualEdgePanel(open) {
+  state.manualEdgePanelOpen = open;
+  elements.manualEdgePanel.classList.toggle("open", open);
+  elements.manualEdgePanel.setAttribute("aria-hidden", String(!open));
+  elements.manualEdgePanel.inert = !open;
+  elements.manualEdges.classList.toggle("active", open);
+  elements.manualEdges.setAttribute("aria-pressed", String(open));
+  if (open) {
+    setReconciliationPanel(false);
+    renderManualEdges();
+  }
+  requestRender();
+}
+
+function fitManualEdge(edge) {
+  fitEndpointPair(edge, state.manualEdgePanelOpen ? elements.manualEdgePanel : null);
+}
+
+function fitEndpointPair(edge, panel) {
+  const panelWidth = panel ? panel.getBoundingClientRect().width + 24 : 0;
+  const availableWidth = Math.max(180, state.width - panelWidth);
+  const spanX = Math.max(4, Math.abs(edge.to_x - edge.from_x));
+  const spanY = Math.max(4, Math.abs(edge.to_y - edge.from_y));
+  const scale = Math.min(
+    Math.max(1, availableWidth - 100) / spanX,
+    Math.max(1, state.height - 130) / spanY,
+    state.fitScale * 40,
+  );
+  state.scale = Math.max(state.fitScale * 0.5, scale);
+  const centerX = (edge.from_x + edge.to_x) / 2;
+  const centerY = (edge.from_y + edge.to_y) / 2;
+  state.offsetX = availableWidth / 2 - centerX * state.scale;
+  state.offsetY = state.height / 2 + centerY * state.scale;
+  updateZoomLabel();
+  requestRender();
+}
+
+function focusManualEdge(index) {
+  const edge = (state.data?.manual_edges || []).find((row) => row.index === index);
+  if (!edge) return;
+  state.focusedManualEdge = edge;
+  const from = state.waypointById.get(edge.from);
+  const to = state.waypointById.get(edge.to);
+  if ([from, to].some((waypoint) => waypoint?.source === "waypoint_tform_ko_unanchored")) {
+    elements.showUnanchored.checked = true;
+  }
+  fitManualEdge(edge);
+  renderManualEdges();
+  elements.manualEdgeList.querySelector(`[data-manual-edge-index="${index}"]`)?.scrollIntoView({
+    block: "nearest",
+  });
+}
+
+function csvCell(value) {
+  let text = String(value ?? "");
+  if (typeof value === "string" && /^[=+\-@\t\r]/.test(text)) text = `'${text}`;
+  return `"${text.replaceAll('"', '""')}"`;
+}
+
+function downloadManualEdges() {
+  const columns = [
+    "index", "selection_status", "coordinate_scope", "from_waypoint_id", "from_name", "from_session_label",
+    "from_x", "from_y", "from_coordinate_source", "to_waypoint_id", "to_name",
+    "to_session_label", "to_x", "to_y", "to_coordinate_source", "distance_m",
+    "cross_session_label", "field_3", "snapshot_id",
+  ];
+  const rows = (state.data?.manual_edges || []).map((edge) => [
+    edge.index,
+    manualEdgeSelectionStatus(edge),
+    edge.coordinate_scope,
+    edge.from,
+    edge.from_name,
+    edge.from_session,
+    edge.from_x,
+    edge.from_y,
+    edge.from_coordinate_source,
+    edge.to,
+    edge.to_name,
+    edge.to_session,
+    edge.to_x,
+    edge.to_y,
+    edge.to_coordinate_source,
+    edge.distance,
+    edge.cross_session_label,
+    edge.field_3,
+    edge.snapshot_id,
+  ]);
+  const csv = [columns, ...rows].map((row) => row.map(csvCell).join(",")).join("\r\n") + "\r\n";
+  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "manual-edges.csv";
+  link.click();
+  URL.revokeObjectURL(url);
+  showToast(`Downloaded ${rows.length} manual edges.`);
+}
+
+function reconciliationReasonLabel(reason) {
+  return ({
+    missing_manual_edge: "manual edge missing",
+    missing_expected_edge: "expected edge missing",
+    resurrected_deleted_edge: "deleted edge returned",
+    unexpected_edge: "unexpected edge",
+  })[reason] || reason;
+}
+
+function renderReconciliation() {
+  const guide = state.data?.reconciliation;
+  if (!guide) return;
+  const actions = guide.actions || [];
+  elements.reconciliationCount.textContent = actions.length.toLocaleString();
+  elements.reconciliationToolbarCount.textContent = actions.length.toLocaleString();
+  const connectCount = actions.filter((action) => action.operation === "connect").length;
+  const deleteCount = actions.filter((action) => action.operation === "delete").length;
+  elements.reconciliationSummary.textContent = guide.graph_reconciled
+    ? "Graph matches · no action required"
+    : `${connectCount} connect · ${deleteCount} delete · ${guide.counts.intentional_cut_edges} intentional cut`;
+
+  const filter = elements.reconciliationFilter.value;
+  const filtered = actions.filter(
+    (action) => filter === "all" || action.operation === filter,
+  );
+  if (!filtered.length) {
+    elements.reconciliationList.innerHTML = guide.graph_reconciled
+      ? '<p class="manual-edge-empty">The post-move graph already matches the baseline induced graph.</p>'
+      : '<p class="manual-edge-empty">No required actions match this filter.</p>';
+    return;
+  }
+  elements.reconciliationList.innerHTML = filtered.map((action) => {
+    const fromLabel = action.from_name || action.from;
+    const toLabel = action.to_name || action.to;
+    const active = state.focusedReconciliation?.index === action.index ? " active" : "";
+    const localFrame = action.coordinate_scope === "local_frame"
+      ? '<span class="manual-edge-badge local-frame">local frame</span>'
+      : "";
+    return `<button class="manual-edge-item ${action.operation}${active}" type="button" data-reconciliation-index="${action.index}">
+      <span class="manual-edge-item-top">
+        <span class="manual-edge-number">#${String(action.index).padStart(3, "0")}</span>
+        <span class="manual-edge-badge ${action.operation}">${action.operation}</span>
+        <span class="manual-edge-badge">${escapeHtml(reconciliationReasonLabel(action.reason))}</span>
+        ${localFrame}
+      </span>
+      <strong>${escapeHtml(fromLabel)} ↔ ${escapeHtml(toLabel)}</strong>
+      <small>${escapeHtml(action.from_session || "—")} ↔ ${escapeHtml(action.to_session || "—")}</small>
+      <code>${escapeHtml(action.from)} ↔ ${escapeHtml(action.to)}</code>
+    </button>`;
+  }).join("");
+}
+
+function setReconciliationPanel(open) {
+  state.reconciliationPanelOpen = open;
+  elements.reconciliationPanel.classList.toggle("open", open);
+  elements.reconciliationPanel.setAttribute("aria-hidden", String(!open));
+  elements.reconciliationPanel.inert = !open;
+  elements.reconciliation.classList.toggle("active", open);
+  elements.reconciliation.setAttribute("aria-pressed", String(open));
+  if (open) {
+    setManualEdgePanel(false);
+    renderReconciliation();
+  }
+  requestRender();
+}
+
+function focusReconciliation(index) {
+  const action = (state.data?.reconciliation?.actions || []).find(
+    (row) => row.index === index,
+  );
+  if (!action) return;
+  state.focusedReconciliation = action;
+  state.focusedManualEdge = null;
+  const from = state.waypointById.get(action.from);
+  const to = state.waypointById.get(action.to);
+  if ([from, to].some((waypoint) => waypoint?.source === "waypoint_tform_ko_unanchored")) {
+    elements.showUnanchored.checked = true;
+  }
+  fitEndpointPair(action, state.reconciliationPanelOpen ? elements.reconciliationPanel : null);
+  renderReconciliation();
+  elements.reconciliationList
+    .querySelector(`[data-reconciliation-index="${index}"]`)
+    ?.scrollIntoView({ block: "nearest" });
+}
+
+function downloadReconciliation() {
+  const columns = [
+    "index", "operation", "reason", "from_waypoint_id", "from_name", "from_session",
+    "from_x", "from_y", "to_waypoint_id", "to_name", "to_session", "to_x", "to_y",
+    "coordinate_scope",
+  ];
+  const rows = (state.data?.reconciliation?.actions || []).map((action) => [
+    action.index,
+    action.operation,
+    action.reason,
+    action.from,
+    action.from_name,
+    action.from_session,
+    action.from_x,
+    action.from_y,
+    action.to,
+    action.to_name,
+    action.to_session,
+    action.to_x,
+    action.to_y,
+    action.coordinate_scope,
+  ]);
+  const csv = [columns, ...rows].map((row) => row.map(csvCell).join(",")).join("\r\n") + "\r\n";
+  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "graph-reconciliation.csv";
+  link.click();
+  URL.revokeObjectURL(url);
+  showToast(`Downloaded ${rows.length} graph actions.`);
 }
 
 function setMode(mode) {
@@ -747,6 +1149,27 @@ function bindEvents() {
   elements.undo.addEventListener("click", undoPoint);
   elements.clear.addEventListener("click", clearPolygon);
   elements.fit.addEventListener("click", fitMap);
+  elements.manualEdges.addEventListener("click", () => {
+    setManualEdgePanel(!state.manualEdgePanelOpen);
+  });
+  elements.manualEdgeClose.addEventListener("click", () => setManualEdgePanel(false));
+  elements.manualEdgeSearch.addEventListener("input", renderManualEdges);
+  elements.manualEdgeFilter.addEventListener("change", renderManualEdges);
+  elements.manualEdgeDownload.addEventListener("click", downloadManualEdges);
+  elements.manualEdgeList.addEventListener("click", (event) => {
+    const item = event.target.closest("[data-manual-edge-index]");
+    if (item) focusManualEdge(Number(item.dataset.manualEdgeIndex));
+  });
+  elements.reconciliation.addEventListener("click", () => {
+    setReconciliationPanel(!state.reconciliationPanelOpen);
+  });
+  elements.reconciliationClose.addEventListener("click", () => setReconciliationPanel(false));
+  elements.reconciliationFilter.addEventListener("change", renderReconciliation);
+  elements.reconciliationDownload.addEventListener("click", downloadReconciliation);
+  elements.reconciliationList.addEventListener("click", (event) => {
+    const item = event.target.closest("[data-reconciliation-index]");
+    if (item) focusReconciliation(Number(item.dataset.reconciliationIndex));
+  });
   elements.theme.addEventListener("click", toggleTheme);
   elements.save.addEventListener("click", savePlan);
   elements.canvas.addEventListener("pointerdown", handlePointerDown);
@@ -793,10 +1216,19 @@ async function initialize() {
     if (!response.ok) throw new Error(`Workspace request failed: HTTP ${response.status}`);
     state.data = await response.json();
     buildIndexes();
+    const guide = state.data.reconciliation;
+    elements.reconciliation.hidden = !guide;
+    if (guide) {
+      document.body.classList.add("reconciliation-mode");
+      const actionCount = (guide.actions || []).length;
+      elements.reconciliationToolbarCount.textContent = actionCount.toLocaleString();
+      elements.reconciliationCount.textContent = actionCount.toLocaleString();
+    }
     elements.mapName.textContent = `${state.data.site_map.name} · ${state.data.counts.waypoints.toLocaleString()} waypoints`;
     elements.mapSummary.textContent =
       `${state.data.counts.edges.toLocaleString()} edges · ` +
       `${(state.data.counts.selection_only_edges || 0).toLocaleString()} field 3 · ` +
+      `${(state.data.counts.manual_edges || 0).toLocaleString()} manual · ` +
       `${(
         state.data.counts.actions
       ).toLocaleString()} actions · ` +
@@ -804,6 +1236,11 @@ async function initialize() {
       `${state.data.counts.unanchored_waypoints.toLocaleString()} unanchored`;
     fitMap();
     computeSelection();
+    if (guide) {
+      setMode("pan");
+      setReconciliationPanel(true);
+      if (guide.actions?.length) focusReconciliation(guide.actions[0].index);
+    }
     elements.loading.classList.add("hidden");
     elements.loading.hidden = true;
   } catch (error) {

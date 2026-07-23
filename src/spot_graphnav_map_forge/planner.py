@@ -15,6 +15,7 @@ from .geometry import (
     load_graph,
     point_in_polygon,
 )
+from .remap import IDENTITY_MODE_CLONE, IDENTITY_MODES
 
 
 def create_plan(
@@ -28,7 +29,10 @@ def create_plan(
     exclude_unanchored_waypoints: bool = False,
     exclude_dependency_free_components: bool = False,
     include_selection_only_edges: bool = False,
+    identity_mode: str = IDENTITY_MODE_CLONE,
 ) -> dict[str, object]:
+    if identity_mode not in IDENTITY_MODES:
+        raise ValueError("identity_mode must be one of: " + ", ".join(sorted(IDENTITY_MODES)))
     workspace = workspace.expanduser().resolve()
     graph = load_graph(workspace / "graph")
     coordinates = _workspace_coordinates(workspace)
@@ -141,6 +145,7 @@ def create_plan(
     return {
         "schema_version": 4,
         "zone_name": zone_name,
+        "identity_mode": identity_mode,
         "polygon": polygon,
         "halo_hops": halo_hops,
         "clone_halo_actions": clone_halo_actions,

@@ -164,7 +164,81 @@
           <button id="fit-map" class="tool-button icon-only" type="button" title="Fit map (F)" aria-label="Fit map to view">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"></path></svg>
           </button>
+          <span class="toolbar-divider"></span>
+          <button id="tool-manual-edges" class="tool-button" type="button" aria-pressed="false" title="Browse manually created edges">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 17 18 7M5 17a2 2 0 1 0 0 .1M19 7a2 2 0 1 0 0 .1"></path></svg>
+            <span>Manual edges</span>
+          </button>
+          <button id="tool-reconciliation" class="tool-button" type="button" aria-pressed="false" title="Show waypoint pairs to connect or delete" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h6M13 7h6M8 4v6M16 4v6M5 17h14M8 14v6M16 14v6"></path></svg>
+            <span>Repair guide</span>
+            <span id="reconciliation-toolbar-count" class="toolbar-count">0</span>
+          </button>
         </div>
+
+        <aside id="manual-edge-panel" class="manual-edge-panel" aria-label="Manually created edges" aria-hidden="true" inert>
+          <div class="manual-edge-header">
+            <div>
+              <div class="section-kicker">ORBIT RECONNECTION AID</div>
+              <h2>Manual edges <span id="manual-edge-count">0</span></h2>
+            </div>
+            <button id="manual-edge-close" class="icon-button" type="button" aria-label="Close manual edge list">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"></path></svg>
+            </button>
+          </div>
+          <p class="manual-edge-intro">Select an edge to zoom to both endpoints. Boundary status follows the current polygon and halo.</p>
+          <div class="manual-edge-controls">
+            <div class="manual-edge-control">
+              <label for="manual-edge-search">Find endpoint or session</label>
+              <input id="manual-edge-search" type="text" placeholder="Waypoint name, ID, session…" autocomplete="off">
+            </div>
+            <div class="manual-edge-control">
+              <label for="manual-edge-filter">Show</label>
+              <select id="manual-edge-filter">
+                <option value="all">All manual edges</option>
+                <option value="boundary">Selection boundary</option>
+                <option value="internal">Preserved inside</option>
+                <option value="field3">Orbit field 3</option>
+                <option value="outside">Outside selection</option>
+              </select>
+            </div>
+          </div>
+          <div id="manual-edge-summary" class="manual-edge-summary" aria-live="polite"></div>
+          <div id="manual-edge-list" class="manual-edge-list"></div>
+          <div class="manual-edge-footer">
+            <button id="manual-edge-download" class="secondary-button" type="button">Download CSV</button>
+            <small>Includes endpoint coordinates, session labels, field-3 state, and selection disposition.</small>
+          </div>
+        </aside>
+
+        <aside id="reconciliation-panel" class="manual-edge-panel reconciliation-panel" aria-label="Graph repair guide" aria-hidden="true" inert>
+          <div class="manual-edge-header">
+            <div>
+              <div class="section-kicker">POST-MOVE GRAPH CHECK</div>
+              <h2>Repair guide <span id="reconciliation-count">0</span></h2>
+            </div>
+            <button id="reconciliation-close" class="icon-button" type="button" aria-label="Close graph repair guide">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"></path></svg>
+            </button>
+          </div>
+          <p class="manual-edge-intro">Select an item to center and highlight its two exact waypoint IDs.</p>
+          <div class="manual-edge-controls reconciliation-controls">
+            <div class="manual-edge-control">
+              <label for="reconciliation-filter">Show</label>
+              <select id="reconciliation-filter">
+                <option value="all">All required actions</option>
+                <option value="connect">Connect in Orbit</option>
+                <option value="delete">Delete in Orbit</option>
+              </select>
+            </div>
+          </div>
+          <div id="reconciliation-summary" class="manual-edge-summary" aria-live="polite"></div>
+          <div id="reconciliation-list" class="manual-edge-list"></div>
+          <div class="manual-edge-footer">
+            <button id="reconciliation-download" class="secondary-button" type="button">Download CSV</button>
+            <small>Only endpoint topology is compared. Edge settings are ignored.</small>
+          </div>
+        </aside>
 
         <canvas id="map-canvas" tabindex="0" aria-label="GraphNav map. Use Draw to add polygon vertices and Pan to move the map."></canvas>
         <div id="loading-state" class="loading-state" role="status">

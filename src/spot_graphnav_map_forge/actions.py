@@ -82,11 +82,17 @@ def clone_site_element(
         )
     source_element_id = element_ids[0]
     source_waypoint_id = waypoint_ids[0]
-    replacements = {
+    identity_pairs = {
         "element_id": (source_element_id.encode(), new_element_id.encode()),
         "waypoint_id": (source_waypoint_id.encode(), new_waypoint_id.encode()),
     }
-    rewritten, counts = rewrite_length_delimited_tokens(payload, replacements)
+    replacements = {label: pair for label, pair in identity_pairs.items() if pair[0] != pair[1]}
+    counts = {label: 0 for label in identity_pairs}
+    if replacements:
+        rewritten, rewritten_counts = rewrite_length_delimited_tokens(payload, replacements)
+        counts.update(rewritten_counts)
+    else:
+        rewritten = payload
     for label, (old, new) in replacements.items():
         if source_token_remains(rewritten, old, new):
             raise ValueError(f"source {label} remains in cloned SiteElement payload")
@@ -107,7 +113,11 @@ def clone_site_element(
                 match.group().decode("ascii").lower()
                 for match in _UUID_PATTERN.finditer(payload)
                 if match.group().decode("ascii").lower()
-                not in {source_element_id.lower(), *provenance_ids}
+                not in {
+                    source_element_id.lower(),
+                    source_waypoint_id.lower(),
+                    *provenance_ids,
+                }
             }
         )
     )
@@ -146,14 +156,20 @@ def clone_triggered_site_element(
         raise ValueError("triggered SiteElement has no field-14 parent reference")
     source_element_id = element_ids[0]
     source_parent_element_id, image_service = reference
-    replacements = {
+    identity_pairs = {
         "element_id": (source_element_id.encode(), new_element_id.encode()),
         "trigger_parent_element_id": (
             source_parent_element_id.encode(),
             new_parent_element_id.encode(),
         ),
     }
-    rewritten, counts = rewrite_length_delimited_tokens(payload, replacements)
+    replacements = {label: pair for label, pair in identity_pairs.items() if pair[0] != pair[1]}
+    counts = {label: 0 for label in identity_pairs}
+    if replacements:
+        rewritten, rewritten_counts = rewrite_length_delimited_tokens(payload, replacements)
+        counts.update(rewritten_counts)
+    else:
+        rewritten = payload
     for label, (old, new) in replacements.items():
         if source_token_remains(rewritten, old, new):
             raise ValueError(f"source {label} remains in cloned triggered SiteElement payload")

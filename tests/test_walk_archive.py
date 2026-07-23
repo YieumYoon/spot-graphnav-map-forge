@@ -1,5 +1,6 @@
 import json
 import struct
+import uuid
 import zipfile
 from pathlib import Path
 
@@ -7,8 +8,13 @@ import pytest
 from bosdyn.api import image_pb2
 from bosdyn.api.autowalk import walks_pb2
 from bosdyn.api.graph_nav import map_pb2
+from google.protobuf import any_pb2
 
-from spot_graphnav_map_forge.walk_archive import export_walk_archive, validate_walk_archive
+from spot_graphnav_map_forge.walk_archive import (
+    export_walk_archive,
+    reissue_walk_recording,
+    validate_walk_archive,
+)
 from spot_graphnav_map_forge.wire import bytes_values, decode_fields
 
 
@@ -90,6 +96,7 @@ def _bundle(
     navigation_only: bool = False,
     with_dock: bool = False,
     with_opaque_profile: bool = False,
+    identity_mode: str | None = None,
     relocalize_marker: bytes | None = b"",
     explicit_relocalize: bytes | None = None,
 ) -> tuple[Path, dict[str, str]]:
@@ -102,8 +109,16 @@ def _bundle(
     old_element_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
     new_element_id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
     old_waypoint_id = "source-waypoint"
-    new_waypoint_id = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
-    snapshot_id = "snapshot-cloned"
+    new_waypoint_id = (
+        "mapped-waypoint-clMruAOUm7YxlJ5D7tH..g=="
+        if identity_mode == "orbit-native"
+        else "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+    )
+    snapshot_id = (
+        "snapshot_mapped-waypoint-avzWVCdYcecalMtz1AglPA=="
+        if identity_mode == "orbit-native"
+        else "snapshot-cloned"
+    )
     old_mission_id = "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
     graph = map_pb2.Graph()
     waypoint = graph.waypoints.add(id=new_waypoint_id, snapshot_id=snapshot_id)
@@ -240,13 +255,86 @@ def _bundle(
             else None
         ),
     }
+    if identity_mode is not None:
+        manifest["identity_policy"] = {"mode": identity_mode}
     (bundle / "clone_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     return bundle, {
         "element_id": new_element_id,
+        "source_element_id": old_element_id,
         "waypoint_id": new_waypoint_id,
+        "source_waypoint_id": old_waypoint_id,
         "old_mission_id": old_mission_id,
         "snapshot_id": snapshot_id,
     }
+
+
+def _recording_template_directory(
+    tmp_path: Path,
+    ids: dict[str, str],
+    *,
+    sleep_source_waypoint_id: str | None = None,
+) -> tuple[Path, bytes]:
+    root = tmp_path / "recording-template.walk"
+    (root / "missions").mkdir(parents=True)
+    graph = map_pb2.Graph()
+    graph.waypoints.add(id=ids["source_waypoint_id"])
+    graph.anchoring.anchors.add(id=ids["source_waypoint_id"])
+    anchored_dock = graph.anchoring.objects.add(id="520")
+    anchored_dock.seed_tform_object.rotation.w = 1
+    if sleep_source_waypoint_id is not None:
+        graph.waypoints.add(id=sleep_source_waypoint_id)
+        graph.anchoring.anchors.add(id=sleep_source_waypoint_id)
+        edge = graph.edges.add()
+        edge.id.from_waypoint = ids["source_waypoint_id"]
+        edge.id.to_waypoint = sleep_source_waypoint_id
+    (root / "graph").write_bytes(graph.SerializeToString())
+
+    walk = walks_pb2.Walk(
+        id="11111111-1111-4111-8111-111111111111",
+        map_name="recording-template",
+        mission_name="recording-template",
+    )
+    walk.global_parameters.should_autofocus_ptz = True
+    walk.global_parameters.hri_behaviors.play_undock_behaviors = True
+    walk.playback_mode.SetInParent()
+    walk.choreography_items.SetInParent()
+    walk.interrupts.SetInParent()
+    source_element = walk.elements.add(id=ids["source_element_id"], name="Gauge")
+    source_element.target.navigate_route.route.waypoint_id.append(ids["source_waypoint_id"])
+    source_element.target.navigate_route.travel_params.max_distance = 0.2
+    source_element.target.navigate_route.destination_waypoint_tform_body_goal.SetInParent()
+    if sleep_source_waypoint_id is not None:
+        pose = walk.elements.add(
+            id="22222222-2222-4222-8222-222222222222",
+            name="Pose - 1",
+        )
+        pose.action.sleep.duration.seconds = 1
+        pose.target.navigate_route.route.waypoint_id.extend(
+            (ids["source_waypoint_id"], sleep_source_waypoint_id)
+        )
+        route_edge = pose.target.navigate_route.route.edge_id.add()
+        route_edge.from_waypoint = ids["source_waypoint_id"]
+        route_edge.to_waypoint = sleep_source_waypoint_id
+        pose.target.navigate_route.travel_params.max_distance = 0.2
+        pose.target.navigate_route.destination_waypoint_tform_body_goal.SetInParent()
+    dock = walk.docks.add(
+        dock_id=520,
+        docked_waypoint_id=ids["source_waypoint_id"],
+    )
+    dock.target_prep_pose.navigate_to.destination_waypoint_id = ids["source_waypoint_id"]
+    dock.prompt_duration.seconds = 60
+
+    metadata = b"synthetic-recording-metadata"
+    extension = any_pb2.Any(
+        type_url="type.googleapis.com/example.internal.MissionMetaData",
+        value=metadata,
+    )
+    mission_payload = walk.SerializeToString() + _length_delimited(
+        1000, extension.SerializeToString()
+    )
+    (root / "missions" / "recording-template.walk").write_bytes(mission_payload)
+    (root / "autowalk_metadata").write_bytes(metadata)
+    return root, metadata
 
 
 def _add_triggered_aivi(bundle: Path, ids: dict[str, str]) -> tuple[bytes, bytes, str]:
@@ -344,6 +432,7 @@ def test_export_walk_rehydrates_images_and_rewrites_daq_identity(tmp_path: Path)
         assert "zone clone.walk/edge_snapshots/" in names
         assert "zone clone.walk/autowalk_metadata" in names
         assert archive.read("zone clone.walk/autowalk_metadata") == b"opaque-metadata"
+        assert archive.read("zone clone.walk/graph") == (bundle / "graph").read_bytes()
         assert f"zone clone.walk/waypoint_snapshots/{ids['snapshot_id']}" in names
         walk = walks_pb2.Walk.FromString(archive.read("zone clone.walk/missions/zone clone.walk"))
     assert len(walk.elements) == 1
@@ -379,6 +468,139 @@ def test_export_walk_rehydrates_images_and_rewrites_daq_identity(tmp_path: Path)
         == b"alignment-image"
     )
     assert validate_walk_archive(output).valid
+
+
+def test_export_walk_applies_recording_envelope_routes_and_dock_profile(tmp_path: Path) -> None:
+    bundle, ids = _bundle(tmp_path, with_dock=True, with_opaque_profile=True)
+    template, metadata = _recording_template_directory(tmp_path, ids)
+    output = tmp_path / "recording-compatible.walk.zip"
+    new_walk_id = "33333333-3333-4333-8333-333333333333"
+
+    result = export_walk_archive(
+        bundle,
+        output,
+        name="recording-compatible",
+        recording_template=template,
+        walk_id=new_walk_id,
+    )
+
+    assert result["validation"]["valid"]
+    assert result["recording_compatibility"]["status"] == "recording_structure_applied"
+    assert result["recording_compatibility"]["walk_extension_fields"] == [1000]
+    assert result["recording_compatibility"]["routes"][0]["status"] == ("recorded_route_remapped")
+    with zipfile.ZipFile(output) as archive:
+        root = "recording-compatible.walk"
+        output_graph = map_pb2.Graph.FromString(archive.read(f"{root}/graph"))
+        assert archive.read(f"{root}/autowalk_metadata") == metadata
+        mission_payload = archive.read(f"{root}/missions/recording-compatible.walk")
+    source_graph = map_pb2.Graph.FromString((bundle / "graph").read_bytes())
+    assert [waypoint.id for waypoint in output_graph.waypoints] == [
+        waypoint.id for waypoint in source_graph.waypoints
+    ]
+    assert [edge.SerializeToString() for edge in output_graph.edges] == [
+        edge.SerializeToString() for edge in source_graph.edges
+    ]
+    assert [anchor.id for anchor in output_graph.anchoring.anchors] == [ids["waypoint_id"]]
+    assert [value.id for value in output_graph.anchoring.objects] == ["520"]
+    anchoring = result["recording_compatibility"]["anchoring"]
+    assert anchoring["anchors_added"] == 1
+    assert anchoring["anchored_object_ids"] == ["520"]
+    extension_payloads = bytes_values(decode_fields(mission_payload), 1000)
+    assert len(extension_payloads) == 1
+    extension = any_pb2.Any.FromString(extension_payloads[0])
+    assert extension.value == metadata
+    walk = walks_pb2.Walk.FromString(mission_payload)
+    assert walk.id == new_walk_id
+    assert walk.playback_mode.WhichOneof("mode") is None
+    assert walk.global_parameters.should_autofocus_ptz
+    assert walk.global_parameters.group_name == ""
+    assert walk.global_parameters.self_right_attempts == 0
+    assert walk.global_parameters.hri_behaviors.play_undock_behaviors
+    assert walk.HasField("choreography_items")
+    assert walk.HasField("interrupts")
+
+    element = walk.elements[0]
+    assert element.target.WhichOneof("target") == "navigate_route"
+    assert list(element.target.navigate_route.route.waypoint_id) == [ids["waypoint_id"]]
+    assert element.target_failure_behavior.retry_count == 2
+    assert element.action_failure_behavior.retry_count == 2
+    assert element.HasField("action_duration")
+    fields = element.action.data_acquisition.acquire_data_request.metadata.data.fields
+    assert fields["element_id"].string_value == element.id
+    assert fields["mission_id"].string_value == new_walk_id
+
+    dock = walk.docks[0]
+    assert dock.dock_id == 520
+    assert dock.docked_waypoint_id == ids["waypoint_id"]
+    assert dock.target_prep_pose.navigate_to.destination_waypoint_id == ids["waypoint_id"]
+    assert [field.number for field in decode_fields(dock.target_prep_pose.SerializeToString())] == [
+        1
+    ]
+    assert dock.prompt_duration.seconds == 60
+
+
+def test_export_walk_builds_sleep_route_from_recording_template(tmp_path: Path) -> None:
+    bundle, ids = _bundle(tmp_path, with_opaque_profile=True)
+    source_sleep_waypoint_id = "source-sleep-waypoint"
+    output_sleep_waypoint_id = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
+    output_sleep_snapshot_id = "sleep-snapshot-cloned"
+
+    graph_path = bundle / "graph"
+    graph = map_pb2.Graph.FromString(graph_path.read_bytes())
+    graph.waypoints.add(
+        id=output_sleep_waypoint_id,
+        snapshot_id=output_sleep_snapshot_id,
+    )
+    edge = graph.edges.add()
+    edge.id.from_waypoint = ids["waypoint_id"]
+    edge.id.to_waypoint = output_sleep_waypoint_id
+    graph_path.write_bytes(graph.SerializeToString())
+    (bundle / "waypoint_snapshots" / output_sleep_snapshot_id).write_bytes(
+        map_pb2.WaypointSnapshot(id=output_sleep_snapshot_id).SerializeToString()
+    )
+    manifest_path = bundle / "clone_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["selection"]["core_waypoint_ids"].append(source_sleep_waypoint_id)
+    manifest["id_mappings"]["waypoint"][source_sleep_waypoint_id] = output_sleep_waypoint_id
+    manifest["id_mappings"]["waypoint_snapshot"]["source-sleep-snapshot"] = output_sleep_snapshot_id
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    template, _ = _recording_template_directory(
+        tmp_path,
+        ids,
+        sleep_source_waypoint_id=source_sleep_waypoint_id,
+    )
+    output = tmp_path / "recording-compatible-sleep.walk.zip"
+    result = export_walk_archive(
+        bundle,
+        output,
+        name="recording-compatible-sleep",
+        recording_template=template,
+        walk_id="33333333-3333-4333-8333-333333333333",
+        sleep_waypoint_id=source_sleep_waypoint_id,
+        sleep_after_element="Gauge",
+    )
+
+    assert result["validation"]["valid"]
+    sleep_report = result["recording_compatibility"]["routes"][-1]
+    assert sleep_report["status"] == "recorded_route_segment_remapped"
+    with zipfile.ZipFile(output) as archive:
+        mission_payload = archive.read(
+            "recording-compatible-sleep.walk/missions/recording-compatible-sleep.walk"
+        )
+    walk = walks_pb2.Walk.FromString(mission_payload)
+    sleep = next(element for element in walk.elements if element.name == "Sleep - 1")
+    assert sleep.action.WhichOneof("action") == "sleep"
+    assert sleep.target.WhichOneof("target") == "navigate_route"
+    assert list(sleep.target.navigate_route.route.waypoint_id) == [
+        ids["waypoint_id"],
+        output_sleep_waypoint_id,
+    ]
+    assert [
+        (edge_id.from_waypoint, edge_id.to_waypoint)
+        for edge_id in sleep.target.navigate_route.route.edge_id
+    ] == [(ids["waypoint_id"], output_sleep_waypoint_id)]
+    assert sleep.HasField("action_duration")
 
 
 def test_export_walk_keeps_navigation_only_site_element(tmp_path: Path) -> None:
@@ -425,6 +647,41 @@ def test_export_walk_can_replace_recording_session_and_refresh_walk_id(tmp_path:
     assert graph.waypoints[0].annotations.client_metadata.client_id == "source-client"
 
 
+def test_orbit_native_export_uses_uuid4_shaped_walk_and_sleep_element_ids(
+    tmp_path: Path,
+) -> None:
+    bundle, ids = _bundle(
+        tmp_path,
+        identity_mode="orbit-native",
+        with_opaque_profile=True,
+    )
+    output = tmp_path / "native.walk.zip"
+
+    result = export_walk_archive(
+        bundle,
+        output,
+        name="native",
+        sleep_waypoint_id=ids["source_waypoint_id"],
+    )
+
+    assert uuid.UUID(result["walk_id"]).version == 4
+    with zipfile.ZipFile(output) as archive:
+        walk = walks_pb2.Walk.FromString(archive.read("native.walk/missions/native.walk"))
+    assert [uuid.UUID(element.id).version for element in walk.elements] == [4, 4]
+    assert [element.action.WhichOneof("action") for element in walk.elements] == [
+        "data_acquisition",
+        "sleep",
+    ]
+
+    with pytest.raises(ValueError, match="version-4 Walk UUID"):
+        export_walk_archive(
+            bundle,
+            tmp_path / "native-bad-id.walk.zip",
+            name="native-bad-id",
+            walk_id="11111111-1111-5111-8111-111111111111",
+        )
+
+
 def test_export_walk_rejects_empty_recording_name(tmp_path: Path) -> None:
     bundle, _ = _bundle(tmp_path)
 
@@ -433,6 +690,21 @@ def test_export_walk_rejects_empty_recording_name(tmp_path: Path) -> None:
             bundle,
             tmp_path / "bad-recording.walk.zip",
             recording_name="   ",
+        )
+
+
+def test_export_walk_rejects_waypoint_metadata_override_in_preserve_mode(tmp_path: Path) -> None:
+    bundle, _ = _bundle(tmp_path)
+    manifest_path = bundle / "clone_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["identity_policy"] = {"mode": "preserve"}
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="mutate metadata on shared waypoint identities"):
+        export_walk_archive(
+            bundle,
+            tmp_path / "preserve-recording-name.walk.zip",
+            recording_name="must-not-change",
         )
 
 
@@ -717,3 +989,306 @@ def test_export_walk_preserves_backup_opaque_target_profile(tmp_path: Path) -> N
     assert bytes_values(target_fields, 4) == (b"opaque-target-4",)
     assert bytes_values(travel_fields, 12) == (b"opaque-travel-12",)
     assert bytes_values(travel_fields, 13) == (b"opaque-travel-13",)
+
+
+def _recorded_walk_directory(tmp_path: Path) -> tuple[Path, dict[str, str]]:
+    source = tmp_path / "recording.walk"
+    (source / "missions").mkdir(parents=True)
+    (source / "waypoint_snapshots").mkdir()
+    (source / "edge_snapshots").mkdir()
+
+    waypoint_id = "recorded-waypoint"
+    snapshot_id = "recorded-snapshot"
+    old_walk_id = "11111111-1111-4111-8111-111111111111"
+    element_id = "22222222-2222-4222-8222-222222222222"
+    graph = map_pb2.Graph()
+    graph.waypoints.add(id=waypoint_id, snapshot_id=snapshot_id)
+    graph.anchoring.anchors.add(id=waypoint_id)
+    (source / "graph").write_bytes(graph.SerializeToString())
+    (source / "waypoint_snapshots" / snapshot_id).write_bytes(
+        map_pb2.WaypointSnapshot(id=snapshot_id).SerializeToString()
+    )
+
+    walk = walks_pb2.Walk(id=old_walk_id, map_name="recording", mission_name="recording")
+    walk.global_parameters.group_name = "recording"
+    walk.playback_mode.once.SetInParent()
+    element = walk.elements.add(id=element_id, name="Inspection")
+    element.target.navigate_to.destination_waypoint_id = waypoint_id
+    request = element.action.data_acquisition.acquire_data_request
+    request.metadata.data.fields["element_id"].string_value = element_id
+    request.metadata.data.fields["mission_id"].string_value = old_walk_id
+    dock = walk.docks.add(dock_id=520, docked_waypoint_id=waypoint_id)
+    dock.target_prep_pose.navigate_to.destination_waypoint_id = waypoint_id
+    walk_payload = walk.SerializeToString() + _length_delimited(1000, b"opaque-top-level")
+    (source / "missions" / "recording.walk").write_bytes(walk_payload)
+    (source / "missions" / "readme.txt").write_text("recorded", encoding="utf-8")
+    (source / "autowalk_metadata").write_bytes(b"opaque-metadata")
+    (source / "topography.png").write_bytes(b"opaque-topography")
+    return source, {
+        "old_walk_id": old_walk_id,
+        "element_id": element_id,
+        "waypoint_id": waypoint_id,
+    }
+
+
+def test_reissue_walk_changes_only_top_level_walk_id(tmp_path: Path) -> None:
+    source, ids = _recorded_walk_directory(tmp_path)
+    output = tmp_path / "recording-walk-id-only.walk.zip"
+    new_walk_id = "33333333-3333-4333-8333-333333333333"
+
+    result = reissue_walk_recording(source, output, new_walk_id=new_walk_id)
+
+    assert result["new_walk_id"] == new_walk_id
+    assert result["validation"]["valid"]
+    assert result["identity_policy"]["changed"] == ["walk"]
+    assert result["identity_policy"]["mode"] == "walk_id_only"
+    assert result["integrity"] == {
+        "source_files": 6,
+        "byte_identical_non_mission_files": 5,
+        "non_walk_id_mission_fields_byte_equal": True,
+        "unchanged_mission_fields_byte_equal": True,
+        "element_payloads_byte_equal": True,
+        "dock_payloads_byte_equal": True,
+        "elements_removed": 0,
+        "docks_removed": 0,
+        "unknown_top_level_fields_preserved": [1000],
+        "daq_source_mission_records_preserved": 1,
+        "daq_source_mission_records_removed": 0,
+    }
+
+    source_mission = (source / "missions" / "recording.walk").read_bytes()
+    with zipfile.ZipFile(output) as archive:
+        output_mission = archive.read("recording.walk/missions/recording.walk")
+        for source_file in (path for path in source.rglob("*") if path.is_file()):
+            if source_file.name == "recording.walk" and source_file.parent.name == "missions":
+                continue
+            relative = source_file.relative_to(source).as_posix()
+            assert archive.read(f"recording.walk/{relative}") == source_file.read_bytes()
+
+    source_fields = decode_fields(source_mission)
+    output_fields = decode_fields(output_mission)
+    assert bytes_values(source_fields, 8) == (ids["old_walk_id"].encode(),)
+    assert bytes_values(output_fields, 8) == (new_walk_id.encode(),)
+    assert tuple(field for field in source_fields if field.number != 8) == tuple(
+        field for field in output_fields if field.number != 8
+    )
+    assert bytes_values(source_fields, 5) == bytes_values(output_fields, 5)
+    assert bytes_values(source_fields, 6) == bytes_values(output_fields, 6)
+    assert bytes_values(output_fields, 1000) == (b"opaque-top-level",)
+
+    reissued_walk = walks_pb2.Walk.FromString(output_mission)
+    assert reissued_walk.id == new_walk_id
+    assert reissued_walk.elements[0].id == ids["element_id"]
+    assert (
+        reissued_walk.elements[0]
+        .action.data_acquisition.acquire_data_request.metadata.data.fields["mission_id"]
+        .string_value
+        == ids["old_walk_id"]
+    )
+    assert validate_walk_archive(output).valid
+
+
+def test_reissue_walk_graph_only_removes_elements_and_docks_at_wire_level(
+    tmp_path: Path,
+) -> None:
+    source, _ = _recorded_walk_directory(tmp_path)
+    output = tmp_path / "recording-graph-only.walk.zip"
+    new_walk_id = "33333333-3333-4333-8333-333333333333"
+
+    result = reissue_walk_recording(
+        source,
+        output,
+        new_walk_id=new_walk_id,
+        graph_only=True,
+    )
+
+    assert result["validation"]["valid"]
+    assert result["identity_policy"] == {
+        "mode": "graph_only_control",
+        "changed": ["walk", "walk_elements_removed", "walk_docks_removed"],
+        "preserved": [
+            "graph",
+            "waypoint",
+            "waypoint_snapshot",
+            "edge",
+            "edge_snapshot",
+            "anchor",
+            "opaque_metadata",
+        ],
+        "changed_wire_fields": [5, 6, 8],
+    }
+    assert result["counts"]["elements"] == 0
+    assert result["counts"]["actions"] == 0
+    assert result["counts"]["docks"] == 0
+    assert result["integrity"]["unchanged_mission_fields_byte_equal"]
+    assert not result["integrity"]["non_walk_id_mission_fields_byte_equal"]
+    assert result["integrity"]["elements_removed"] == 1
+    assert result["integrity"]["docks_removed"] == 1
+    assert result["integrity"]["daq_source_mission_records_preserved"] == 0
+    assert result["integrity"]["daq_source_mission_records_removed"] == 1
+
+    with zipfile.ZipFile(output) as archive:
+        mission_payload = archive.read("recording.walk/missions/recording.walk")
+        assert archive.read("recording.walk/graph") == (source / "graph").read_bytes()
+        assert archive.read("recording.walk/autowalk_metadata") == b"opaque-metadata"
+    mission_fields = decode_fields(mission_payload)
+    assert not bytes_values(mission_fields, 5)
+    assert not bytes_values(mission_fields, 6)
+    assert bytes_values(mission_fields, 1000) == (b"opaque-top-level",)
+    walk = walks_pb2.Walk.FromString(mission_payload)
+    assert walk.id == new_walk_id
+    assert not walk.elements
+    assert not walk.docks
+    assert validate_walk_archive(output).valid
+
+
+def test_reissue_walk_can_add_one_skipped_navigation_only_sentinel(tmp_path: Path) -> None:
+    source, ids = _recorded_walk_directory(tmp_path)
+    output = tmp_path / "recording-navigation-only-sentinel.walk.zip"
+
+    result = reissue_walk_recording(
+        source,
+        output,
+        new_walk_id="33333333-3333-4333-8333-333333333333",
+        graph_only=True,
+        navigation_only_sentinel=True,
+    )
+
+    assert result["validation"]["valid"]
+    assert result["identity_policy"] == {
+        "mode": "graph_only_sentinel_probe",
+        "changed": [
+            "walk",
+            "walk_elements_removed",
+            "walk_docks_removed",
+            "navigation_only_sentinel_added",
+        ],
+        "preserved": [
+            "graph",
+            "waypoint",
+            "waypoint_snapshot",
+            "edge",
+            "edge_snapshot",
+            "anchor",
+            "opaque_metadata",
+        ],
+        "changed_wire_fields": [5, 6, 8],
+    }
+    assert result["counts"]["elements"] == 1
+    assert result["counts"]["actions"] == 0
+    assert result["counts"]["docks"] == 0
+    sentinel_report = result["navigation_only_sentinel"]
+    assert sentinel_report["status"] == "added"
+    assert sentinel_report["is_skipped"]
+    assert sentinel_report["action_kind"] is None
+    assert sentinel_report["target_kind"] == "navigate_to"
+    assert sentinel_report["element_id"] not in set(ids.values())
+
+    with zipfile.ZipFile(output) as archive:
+        mission_payload = archive.read("recording.walk/missions/recording.walk")
+        assert archive.read("recording.walk/graph") == (source / "graph").read_bytes()
+    mission_fields = decode_fields(mission_payload)
+    assert len(bytes_values(mission_fields, 5)) == 1
+    assert not bytes_values(mission_fields, 6)
+    assert bytes_values(mission_fields, 1000) == (b"opaque-top-level",)
+    walk = walks_pb2.Walk.FromString(mission_payload)
+    assert len(walk.elements) == 1
+    sentinel = walk.elements[0]
+    assert sentinel.id == sentinel_report["element_id"]
+    assert sentinel.is_skipped
+    assert sentinel.action.WhichOneof("action") is None
+    assert sentinel.target.navigate_to.destination_waypoint_id == ids["waypoint_id"]
+    assert validate_walk_archive(output).valid
+
+
+def test_reissue_walk_can_add_disconnected_waypoint_snapshot_and_anchor_sentinel(
+    tmp_path: Path,
+) -> None:
+    source, ids = _recorded_walk_directory(tmp_path)
+    output = tmp_path / "recording-disconnected-waypoint-sentinel.walk.zip"
+
+    result = reissue_walk_recording(
+        source,
+        output,
+        new_walk_id="33333333-3333-4333-8333-333333333333",
+        graph_only=True,
+        navigation_only_sentinel=True,
+        disconnected_waypoint_sentinel=True,
+    )
+
+    assert result["validation"]["valid"]
+    assert result["identity_policy"] == {
+        "mode": "disconnected_waypoint_sentinel_probe",
+        "changed": [
+            "walk",
+            "walk_elements_removed",
+            "walk_docks_removed",
+            "navigation_only_sentinel_added",
+            "disconnected_waypoint_sentinel_added",
+            "waypoint_snapshot_sentinel_added",
+            "anchor_sentinel_added",
+        ],
+        "preserved": [
+            "graph",
+            "waypoint",
+            "waypoint_snapshot",
+            "edge",
+            "edge_snapshot",
+            "anchor",
+            "opaque_metadata",
+        ],
+        "changed_wire_fields": [5, 6, 8],
+    }
+    assert result["counts"]["waypoints"] == 2
+    assert result["counts"]["waypoint_snapshots"] == 2
+    assert result["counts"]["elements"] == 1
+    assert result["counts"]["actions"] == 0
+    graph_report = result["disconnected_waypoint_sentinel"]
+    assert graph_report["status"] == "added"
+    assert graph_report["connected_edges"] == 0
+    assert graph_report["recording_metadata"] == "preserved_from_source_snapshot"
+    assert all(graph_report["integrity"].values())
+    assert graph_report["waypoint_id"] not in set(ids.values())
+    assert graph_report["snapshot_id"] not in set(ids.values())
+    assert graph_report["anchor_id"] == graph_report["waypoint_id"]
+
+    with zipfile.ZipFile(output) as archive:
+        graph_payload = archive.read("recording.walk/graph")
+        mission_payload = archive.read("recording.walk/missions/recording.walk")
+        snapshot_payload = archive.read(
+            f"recording.walk/waypoint_snapshots/{graph_report['snapshot_id']}"
+        )
+    source_graph = map_pb2.Graph.FromString((source / "graph").read_bytes())
+    graph = map_pb2.Graph.FromString(graph_payload)
+    assert len(graph.waypoints) == 2
+    assert len(graph.anchoring.anchors) == 2
+    assert graph.waypoints[0].SerializeToString() == source_graph.waypoints[0].SerializeToString()
+    assert (
+        graph.anchoring.anchors[0].SerializeToString()
+        == source_graph.anchoring.anchors[0].SerializeToString()
+    )
+    new_waypoint = graph.waypoints[1]
+    assert new_waypoint.id == graph_report["waypoint_id"]
+    assert new_waypoint.snapshot_id == graph_report["snapshot_id"]
+    assert graph.anchoring.anchors[1].id == new_waypoint.id
+    assert not any(
+        edge.id.from_waypoint == new_waypoint.id or edge.id.to_waypoint == new_waypoint.id
+        for edge in graph.edges
+    )
+    assert map_pb2.WaypointSnapshot.FromString(snapshot_payload).id == new_waypoint.snapshot_id
+    walk = walks_pb2.Walk.FromString(mission_payload)
+    assert walk.elements[0].target.navigate_to.destination_waypoint_id == new_waypoint.id
+    assert walk.elements[0].is_skipped
+    assert walk.elements[0].action.WhichOneof("action") is None
+    assert validate_walk_archive(output).valid
+
+
+def test_reissue_walk_rejects_reused_source_identity(tmp_path: Path) -> None:
+    source, ids = _recorded_walk_directory(tmp_path)
+
+    with pytest.raises(ValueError, match="must not reuse"):
+        reissue_walk_recording(
+            source,
+            tmp_path / "bad.walk.zip",
+            new_walk_id=ids["old_walk_id"],
+        )

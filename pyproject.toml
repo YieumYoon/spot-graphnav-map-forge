@@ -5,12 +5,12 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "spot-graphnav-map-forge"
 version = "0.1.0a1"
-description = "Offline-first polygon splitting and cloning for Spot GraphNav maps"
+description = "Orbit-assisted recording splits and experimental offline cloning for Spot GraphNav maps"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
-keywords = ["boston-dynamics", "graphnav", "robotics", "spot", "autowalk"]
+keywords = ["boston-dynamics", "graphnav", "orbit", "robotics", "spot", "autowalk"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",

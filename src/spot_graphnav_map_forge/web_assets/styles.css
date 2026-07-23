@@ -69,7 +69,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   color: inherit;
   font: inherit;
 }
@@ -80,6 +81,7 @@ button {
 
 button:focus-visible,
 input:focus-visible,
+select:focus-visible,
 canvas:focus-visible {
   outline: 2px solid var(--cyan);
   outline-offset: 2px;
@@ -258,7 +260,8 @@ label {
 }
 
 input[type="text"],
-input[type="number"] {
+input[type="number"],
+select {
   background: var(--panel-raised);
   border: 1px solid var(--border);
   border-radius: 7px;
@@ -276,7 +279,9 @@ input[type="text"]::placeholder {
 input[type="text"]:hover,
 input[type="number"]:hover,
 input[type="text"]:focus,
-input[type="number"]:focus {
+input[type="number"]:focus,
+select:hover,
+select:focus {
   border-color: var(--border-strong);
 }
 
@@ -685,6 +690,242 @@ input[type="number"]:focus {
   z-index: 5;
 }
 
+.manual-edge-panel {
+  background: color-mix(in srgb, var(--panel) 97%, transparent);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  bottom: 12px;
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  max-width: calc(100% - 24px);
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+  position: absolute;
+  right: 12px;
+  top: 12px;
+  transform: translateX(18px);
+  transition: opacity 160ms ease, transform 160ms ease;
+  width: 370px;
+  z-index: 6;
+}
+
+.manual-edge-panel.open {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(0);
+}
+
+.manual-edge-header {
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  padding: 14px 14px 12px;
+}
+
+.manual-edge-header h2 {
+  font-size: 16px;
+  margin-top: 4px;
+}
+
+.manual-edge-header h2 span {
+  color: var(--primary);
+  font-family: "Fira Code", ui-monospace, monospace;
+  font-size: 12px;
+}
+
+.manual-edge-intro {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+  padding: 11px 14px 0;
+}
+
+.manual-edge-controls {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) 132px;
+  padding: 11px 14px;
+}
+
+.reconciliation-controls {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.manual-edge-control {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.manual-edge-controls label {
+  font-size: 9px;
+}
+
+.manual-edge-controls input,
+.manual-edge-controls select {
+  margin-top: 0;
+  min-height: 34px;
+  min-width: 0;
+}
+
+.manual-edge-summary {
+  border-bottom: 1px solid var(--border);
+  border-top: 1px solid var(--border);
+  color: var(--faint);
+  font-family: "Fira Code", ui-monospace, monospace;
+  font-size: 9px;
+  min-height: 31px;
+  padding: 9px 14px;
+}
+
+.manual-edge-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 7px;
+}
+
+.manual-edge-empty {
+  color: var(--faint);
+  font-size: 11px;
+  line-height: 1.5;
+  padding: 18px 12px;
+  text-align: center;
+}
+
+.manual-edge-item {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  color: var(--muted);
+  display: grid;
+  gap: 4px;
+  padding: 9px;
+  text-align: left;
+  width: 100%;
+}
+
+.manual-edge-item + .manual-edge-item {
+  margin-top: 3px;
+}
+
+.manual-edge-item:hover {
+  background: var(--panel-soft);
+  border-color: var(--border);
+}
+
+.manual-edge-item.active {
+  background: color-mix(in srgb, var(--danger) 10%, var(--panel-raised));
+  border-color: color-mix(in srgb, var(--danger) 55%, var(--border));
+}
+
+.manual-edge-item.connect.active {
+  background: color-mix(in srgb, var(--primary) 10%, var(--panel-raised));
+  border-color: color-mix(in srgb, var(--primary) 55%, var(--border));
+}
+
+.manual-edge-item-top {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+}
+
+.manual-edge-number {
+  color: var(--faint);
+  font-family: "Fira Code", ui-monospace, monospace;
+  font-size: 9px;
+}
+
+.manual-edge-badge {
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  padding: 2px 5px;
+  text-transform: uppercase;
+}
+
+.manual-edge-badge.internal {
+  border-color: color-mix(in srgb, var(--primary) 60%, var(--border));
+  color: var(--primary);
+}
+
+.manual-edge-badge.boundary,
+.manual-edge-badge.field3 {
+  border-color: color-mix(in srgb, var(--amber) 65%, var(--border));
+  color: var(--amber);
+}
+
+.manual-edge-badge.local-frame {
+  border-color: color-mix(in srgb, var(--danger) 60%, var(--border));
+  color: var(--danger);
+}
+
+.manual-edge-badge.connect {
+  border-color: color-mix(in srgb, var(--primary) 60%, var(--border));
+  color: var(--primary);
+}
+
+.manual-edge-badge.delete {
+  border-color: color-mix(in srgb, var(--danger) 60%, var(--border));
+  color: var(--danger);
+}
+
+.manual-edge-item strong {
+  color: var(--text);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.manual-edge-item small,
+.manual-edge-item code {
+  font-size: 9px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.manual-edge-item code {
+  color: var(--faint);
+  font-family: "Fira Code", ui-monospace, monospace;
+}
+
+.manual-edge-footer {
+  border-top: 1px solid var(--border);
+  display: grid;
+  gap: 7px;
+  padding: 11px 14px 13px;
+}
+
+.manual-edge-footer small {
+  color: var(--faint);
+  font-size: 9px;
+  line-height: 1.4;
+}
+
+.secondary-button {
+  background: var(--panel-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 700;
+  min-height: 34px;
+  padding: 7px 10px;
+}
+
+.secondary-button:hover {
+  background: var(--panel-soft);
+}
+
 .tool-button {
   align-items: center;
   background: transparent;
@@ -714,6 +955,15 @@ input[type="number"]:focus {
 .tool-button svg {
   height: 16px;
   width: 16px;
+}
+
+.tool-button .toolbar-count {
+  background: var(--panel-soft);
+  border-radius: 999px;
+  color: var(--text);
+  font-family: "Fira Code", ui-monospace, monospace;
+  font-size: 9px;
+  padding: 1px 5px;
 }
 
 .tool-button.icon-only {
@@ -914,6 +1164,13 @@ input[type="number"]:focus {
   .tool-button span {
     display: none;
   }
+
+  .manual-edge-panel {
+    bottom: 8px;
+    right: 8px;
+    top: 8px;
+    width: calc(100% - 16px);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -925,4 +1182,13 @@ input[type="number"]:focus {
     scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+body.reconciliation-mode .workspace-layout {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+}
+
+body.reconciliation-mode .control-panel {
+  display: none;
 }

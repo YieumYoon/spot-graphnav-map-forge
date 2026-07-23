@@ -20,8 +20,11 @@ from .backup import (
 from .builder import build_clone
 from .geometry import waypoint_coordinates
 from .planner import create_plan
+from .reconnect import build_graph_reconciliation, build_reconnect_inventory
+from .remap import IDENTITY_MODES
+from .topology import build_effective_topology
 from .validator import validate_bundle
-from .walk_archive import export_walk_archive, validate_walk_archive
+from .walk_archive import export_walk_archive, reissue_walk_recording, validate_walk_archive
 from .web import serve_editor
 from .wire import decode_fields
 
@@ -39,7 +42,17 @@ def main(argv: list[str] | None = None) -> int:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="spot-map-forge",
-        description="Offline-first Spot GraphNav map inspection and cloning.",
+        description=(
+            "Read-only backup analysis for Orbit-assisted recording splits, plus an "
+            "experimental offline GraphNav/Walk clone workflow."
+        ),
+        epilog=(
+            "Recommended same-instance workflow: inspect, graph-baseline, and optionally "
+            "reconcile-graph; move recordings and save only in Orbit. "
+            "Experimental offline clone workflow: prepare, plan, audit, build, validate, "
+            "export-walk, reissue-walk, validate-walk, and serve. "
+            "See docs/workflows/ before choosing a workflow."
+        ),
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -49,26 +62,74 @@ def _parser() -> argparse.ArgumentParser:
     inspect_parser.set_defaults(handler=_inspect)
 
     wire_parser = subparsers.add_parser(
-        "wire-dump", help="Inspect low-level protobuf envelope fields."
+        "wire-dump", help="Research: inspect low-level protobuf envelope fields."
     )
     wire_parser.add_argument("backup", type=Path)
     wire_parser.add_argument("member")
     wire_parser.set_defaults(handler=_wire_dump)
 
     prepare_parser = subparsers.add_parser(
-        "prepare", help="Reconstruct one final site graph into an offline workspace."
+        "prepare",
+        help="Experimental clone: reconstruct one final graph into an offline workspace.",
     )
     prepare_parser.add_argument("backup", type=Path)
     prepare_parser.add_argument("--map", dest="map_query", required=True)
     prepare_parser.add_argument("--out", type=Path, required=True)
     prepare_parser.set_defaults(handler=_prepare)
 
-    plan_parser = subparsers.add_parser("plan", help="Select a zone using a polygon JSON file.")
+    edge_inventory_parser = subparsers.add_parser(
+        "edge-inventory",
+        help="Recommended split: create a private manual-edge planning inventory.",
+    )
+    edge_inventory_parser.add_argument("workspace", type=Path)
+    edge_inventory_parser.add_argument("--out", type=Path, required=True)
+    edge_inventory_parser.set_defaults(handler=_edge_inventory)
+
+    graph_baseline_parser = subparsers.add_parser(
+        "graph-baseline",
+        help=(
+            "Recommended split: freeze a private B0 effective graph, including manual edges and "
+            "SiteEdge deletion tombstones plus public edge settings."
+        ),
+    )
+    graph_baseline_parser.add_argument("backup", type=Path)
+    graph_baseline_parser.add_argument("--map", dest="map_query", required=True)
+    graph_baseline_parser.add_argument("--out", type=Path, required=True)
+    graph_baseline_parser.set_defaults(handler=_graph_baseline)
+
+    reconcile_graph_parser = subparsers.add_parser(
+        "reconcile-graph",
+        help=(
+            "Recommended split audit: compare B0 with a post-move backup and create a read-only "
+            "connect/delete/update guide."
+        ),
+    )
+    reconcile_graph_parser.add_argument("workspace", type=Path)
+    reconcile_graph_parser.add_argument("before_backup", type=Path)
+    reconcile_graph_parser.add_argument("after_backup", type=Path)
+    reconcile_graph_parser.add_argument("--before-map", required=True)
+    reconcile_graph_parser.add_argument("--after-map", required=True)
+    reconcile_graph_parser.add_argument("--out", type=Path, required=True)
+    reconcile_graph_parser.set_defaults(handler=_reconcile_graph)
+
+    plan_parser = subparsers.add_parser(
+        "plan", help="Experimental clone: select a zone using a polygon JSON file."
+    )
     plan_parser.add_argument("workspace", type=Path)
     plan_parser.add_argument("--polygon", type=Path, required=True)
     plan_parser.add_argument("--zone-name", required=True)
     plan_parser.add_argument("--halo-hops", type=int, default=1)
     plan_parser.add_argument("--clone-halo-actions", action="store_true")
+    plan_parser.add_argument(
+        "--identity-mode",
+        choices=tuple(sorted(IDENTITY_MODES)),
+        default="clone",
+        help=(
+            "Identity policy. 'clone' creates UUIDv5 object IDs; experimental 'orbit-native' "
+            "creates tablet-shaped GraphNav IDs and UUIDv4-shaped Orbit object IDs; experimental "
+            "'preserve' keeps GraphNav and SiteElement IDs while the exported Walk remains new."
+        ),
+    )
     plan_parser.add_argument(
         "--exclude-unanchored-waypoints",
         action="store_true",
@@ -104,26 +165,45 @@ def _parser() -> argparse.ArgumentParser:
     plan_parser.set_defaults(handler=_plan)
 
     audit_parser = subparsers.add_parser(
-        "audit", help="Report dependencies and preservation risks for a split plan."
+        "audit", help="Experimental clone: report dependencies and preservation risks."
     )
     audit_parser.add_argument("workspace", type=Path)
     audit_parser.add_argument("--plan", type=Path, required=True)
     audit_parser.add_argument("--out", type=Path)
     audit_parser.set_defaults(handler=_audit)
 
-    build_parser = subparsers.add_parser("build", help="Build an offline cloned GraphNav bundle.")
+    build_parser = subparsers.add_parser(
+        "build", help="Experimental clone: build an offline GraphNav bundle."
+    )
     build_parser.add_argument("workspace", type=Path)
     build_parser.add_argument("--plan", type=Path, required=True)
     build_parser.add_argument("--out", type=Path, required=True)
+    build_parser.add_argument(
+        "--clone-name",
+        help=(
+            "Override the plan zone name used as the deterministic clone-ID namespace. "
+            "Use a new value when two exported maps must coexist independently in Orbit."
+        ),
+    )
+    build_parser.add_argument(
+        "--identity-mode",
+        choices=tuple(sorted(IDENTITY_MODES)),
+        help=(
+            "Override the plan identity mode for an audited offline experiment: clone, "
+            "orbit-native, or preserve."
+        ),
+    )
     build_parser.set_defaults(handler=_build)
 
-    validate_parser = subparsers.add_parser("validate", help="Validate a cloned bundle offline.")
+    validate_parser = subparsers.add_parser(
+        "validate", help="Experimental clone: validate a cloned bundle offline."
+    )
     validate_parser.add_argument("bundle", type=Path)
     validate_parser.set_defaults(handler=_validate)
 
     export_walk_parser = subparsers.add_parser(
         "export-walk",
-        help="Package a cloned bundle as an uploadable public Autowalk .walk.zip archive.",
+        help="Experimental clone: package a bundle as a public Autowalk .walk.zip.",
     )
     export_walk_parser.add_argument("bundle", type=Path)
     export_walk_parser.add_argument("--out", type=Path, required=True)
@@ -145,6 +225,21 @@ def _parser() -> argparse.ArgumentParser:
         "--template-archive",
         type=Path,
         help="Optional tablet .walk.zip used only to copy opaque autowalk_metadata.",
+    )
+    export_walk_parser.add_argument(
+        "--recording-template",
+        type=Path,
+        help=(
+            "Same-map tablet recording used only for its public Walk/Dock/route profile and "
+            "recording envelope; the output Graph and Actions still come from the clone bundle."
+        ),
+    )
+    export_walk_parser.add_argument(
+        "--walk-id",
+        help=(
+            "Explicit globally unique Walk UUID. Use a freshly issued UUID once for a new "
+            "recording-compatible fork and reuse it for rebuilds."
+        ),
     )
     export_walk_parser.add_argument(
         "--triggered-ai-mode",
@@ -179,18 +274,59 @@ def _parser() -> argparse.ArgumentParser:
     )
     export_walk_parser.set_defaults(handler=_export_walk)
 
+    reissue_walk_parser = subparsers.add_parser(
+        "reissue-walk",
+        help=("Experimental probe: package a tablet Walk with its top-level Walk ID changed."),
+    )
+    reissue_walk_parser.add_argument("source", type=Path)
+    reissue_walk_parser.add_argument("--out", type=Path, required=True)
+    reissue_walk_parser.add_argument(
+        "--new-walk-id",
+        help="Explicit replacement UUID; defaults to a freshly generated UUIDv4.",
+    )
+    reissue_walk_parser.add_argument(
+        "--graph-only",
+        action="store_true",
+        help=(
+            "Diagnostic control: remove all Walk Elements and Docks while preserving the Graph, "
+            "snapshots, anchors, names, and opaque sidecars."
+        ),
+    )
+    reissue_walk_parser.add_argument(
+        "--navigation-only-sentinel",
+        action="store_true",
+        help=(
+            "With --graph-only, add one new skipped Element with no action and a copied source "
+            "navigation target to test Orbit's all-data-duplicate gate."
+        ),
+    )
+    reissue_walk_parser.add_argument(
+        "--disconnected-waypoint-sentinel",
+        action="store_true",
+        help=(
+            "With both sentinel flags, clone one waypoint, snapshot, and anchor under new IDs "
+            "without adding an edge; all original GraphNav objects remain unchanged."
+        ),
+    )
+    reissue_walk_parser.set_defaults(handler=_reissue_walk)
+
     validate_walk_parser = subparsers.add_parser(
-        "validate-walk", help="Validate an Autowalk .walk.zip archive offline."
+        "validate-walk", help="Experimental clone: validate a .walk.zip archive offline."
     )
     validate_walk_parser.add_argument("archive", type=Path)
     validate_walk_parser.set_defaults(handler=_validate_walk)
 
     serve_parser = subparsers.add_parser(
-        "serve", help="Run the local polygon editor for a prepared workspace."
+        "serve", help="Experimental clone: run the local polygon editor."
     )
     serve_parser.add_argument("workspace", type=Path)
     serve_parser.add_argument("--host", default="127.0.0.1")
     serve_parser.add_argument("--port", type=int, default=8787)
+    serve_parser.add_argument(
+        "--reconciliation",
+        type=Path,
+        help="Optional graph reconciliation guide shown as connect/delete waypoint pairs.",
+    )
     serve_parser.add_argument(
         "--allow-remote",
         action="store_true",
@@ -510,6 +646,7 @@ def _plan(args: argparse.Namespace) -> int:
         exclude_unanchored_waypoints=args.exclude_unanchored_waypoints,
         exclude_dependency_free_components=args.exclude_dependency_free_components,
         include_selection_only_edges=args.include_selection_only_edges,
+        identity_mode=args.identity_mode,
     )
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(
@@ -517,6 +654,87 @@ def _plan(args: argparse.Namespace) -> int:
         encoding="utf-8",
     )
     print(json.dumps(plan["counts"], sort_keys=True))
+    return 0
+
+
+def _edge_inventory(args: argparse.Namespace) -> int:
+    out = args.out.expanduser().resolve()
+    if out.exists():
+        raise ValueError(f"output already exists: {out}")
+    inventory = build_reconnect_inventory(args.workspace)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(
+        json.dumps(inventory, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    print(json.dumps(inventory["counts"], sort_keys=True))
+    return 0
+
+
+def _graph_baseline(args: argparse.Namespace) -> int:
+    out = args.out.expanduser().resolve()
+    if out.exists():
+        raise ValueError(f"output already exists: {out}")
+    with BackupArchive(args.backup) as archive:
+        site_map = resolve_site_map(archive, args.map_query)
+        baseline = build_effective_topology(archive, site_map)
+    baseline["kind"] = "orbit_graph_baseline_inventory"
+    baseline["sensitivity"] = "private_operational_data_do_not_commit"
+    baseline["baseline_role"] = (
+        "Immutable B0 reference for live exact-ID topology and public edge-settings "
+        "reconciliation; a fresh B1 backup remains an optional final payload audit"
+    )
+    baseline["limitations"] = {
+        "tombstone_origin": (
+            "The backup does not identify whether a SiteEdge tombstone came from an operator "
+            "deletion or Orbit normalization. Preserve and compare every tombstone by exact "
+            "endpoint IDs."
+        ),
+        "edge_identity": "canonical unordered pair of exact waypoint IDs",
+        "public_edge_settings": (
+            "Public GraphNav Edge.annotations values are captured except edgeSource, which is "
+            "treated as provenance and never overwritten by the extension."
+        ),
+        "private_wrapper_fields": (
+            "Opaque/private SiteEdge wrapper fields are inventoried by field number only and "
+            "cannot be reconstructed by the public-settings restore."
+        ),
+    }
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(
+        json.dumps(baseline, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    print(
+        json.dumps(
+            {
+                **baseline["counts"],
+                "manual_edges": baseline["edge_source_counts"].get("EDGE_SOURCE_USER_REQUEST", 0),
+            },
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
+def _reconcile_graph(args: argparse.Namespace) -> int:
+    out = args.out.expanduser().resolve()
+    if out.exists():
+        raise ValueError(f"output already exists: {out}")
+    guide = build_graph_reconciliation(
+        args.workspace,
+        args.before_backup,
+        args.after_backup,
+        before_map_query=args.before_map,
+        after_map_query=args.after_map,
+    )
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(
+        json.dumps(guide, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    summary = {"graph_reconciled": guide["graph_reconciled"], **guide["counts"]}
+    print(json.dumps(summary, sort_keys=True))
     return 0
 
 
@@ -547,7 +765,13 @@ def _audit(args: argparse.Namespace) -> int:
 
 
 def _build(args: argparse.Namespace) -> int:
-    manifest = build_clone(args.workspace, args.plan, args.out)
+    manifest = build_clone(
+        args.workspace,
+        args.plan,
+        args.out,
+        identity_mode=args.identity_mode,
+        clone_name=args.clone_name,
+    )
     report = validate_bundle(args.out)
     print(json.dumps({"counts": manifest["counts"], "valid": report.valid}, sort_keys=True))
     return 0 if report.valid else 1
@@ -578,11 +802,26 @@ def _export_walk(args: argparse.Namespace) -> int:
         name=args.name,
         recording_name=args.recording_name,
         template_archive=args.template_archive,
+        recording_template=args.recording_template,
+        walk_id=args.walk_id,
         triggered_ai_mode=args.triggered_ai_mode,
         sleep_waypoint_id=args.sleep_waypoint_id,
         sleep_duration_seconds=args.sleep_duration_seconds,
         sleep_name=args.sleep_name,
         sleep_after_element=args.sleep_after_element,
+    )
+    print(json.dumps(result, indent=2, ensure_ascii=False, sort_keys=True))
+    return 0
+
+
+def _reissue_walk(args: argparse.Namespace) -> int:
+    result = reissue_walk_recording(
+        args.source,
+        args.out,
+        new_walk_id=args.new_walk_id,
+        graph_only=args.graph_only,
+        navigation_only_sentinel=args.navigation_only_sentinel,
+        disconnected_waypoint_sentinel=args.disconnected_waypoint_sentinel,
     )
     print(json.dumps(result, indent=2, ensure_ascii=False, sort_keys=True))
     return 0
@@ -609,7 +848,12 @@ def _validate_walk(args: argparse.Namespace) -> int:
 def _serve(args: argparse.Namespace) -> int:
     if args.host not in {"127.0.0.1", "localhost", "::1"} and not args.allow_remote:
         raise ValueError("non-loopback hosts require --allow-remote")
-    serve_editor(args.workspace, args.host, args.port)
+    serve_editor(
+        args.workspace,
+        args.host,
+        args.port,
+        reconciliation=args.reconciliation,
+    )
     return 0
 
 

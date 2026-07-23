@@ -157,6 +157,7 @@ def create_preservation_audit(workspace: Path, plan_path: Path) -> dict[str, obj
         "plan": str(plan_path),
         "site_map": metadata["site_map"],
         "selection": {
+            "identity_mode": plan.get("identity_mode", "clone"),
             "core_waypoints": len(core),
             "halo_waypoints": len(halo),
             "remainder_waypoints": len(remainder),
@@ -265,8 +266,12 @@ def create_preservation_audit(workspace: Path, plan_path: Path) -> dict[str, obj
                 ),
             },
             "partition_preserve_ids": {
-                "status": "research_required",
-                "implemented": False,
+                "status": (
+                    "experimental_offline_mode"
+                    if plan.get("identity_mode") == "preserve"
+                    else "available_by_explicit_opt_in"
+                ),
+                "implemented": True,
                 "blockers": partition_blockers,
             },
         },

@@ -1,8 +1,27 @@
 # Architecture and data guarantees
 
+## Workflow separation
+
+The repository has two compatibility boundaries:
+
+1. **Recommended same-instance workflow** — the offline tool builds an immutable B0 topology and
+   settings baseline; the Orbit Site Map Assistant compares it with a live post-move Site Map and creates
+   native unsaved editor drafts. Orbit owns recording assignment, validation, Undo/Redo, and Save.
+2. **Experimental offline clone workflow** — the Python package selects and remaps backup objects,
+   builds an offline clone, and packages a public Autowalk archive for a disposable import test.
+
+These workflows share the read-only backup adapter and topology analysis, but they must not be
+presented as interchangeable:
+
+- the recommended path preserves native recording/waypoint identity by moving recordings;
+- the experimental path creates or probes a new transport/object identity and has separate
+  lifecycle and history risks.
+
+See the [workflow documentation index](README.md) before using the lower-level architecture below.
+
 ## Boundary
 
-The project has three layers:
+The experimental offline clone path has three layers:
 
 1. **Offline forge** — inventory, final-graph reconstruction, polygon selection, cloning, asset
    staging, auditing, and structural validation.
@@ -77,12 +96,79 @@ The exported Walk ID is derived from the validated archive/display name and sour
 Using a different `--name` produces a different deterministic Walk ID without changing the cloned
 GraphNav object IDs in the bundle.
 
+When two revisions must coexist as independent Orbit maps, `build --clone-name <new-name>`
+overrides the plan's zone name as the deterministic clone-ID seed. Rebuilding from the same audited
+selection then gives every cloned waypoint, waypoint snapshot, edge snapshot, SiteElement, and
+SiteDock record a disjoint identity while preserving topology and payload content. Export naming
+alone cannot provide this separation.
+
 GraphNav edge identity is defined by its remapped endpoint pair. Sensor, fiducial, and physical
 dock numbers are not object identities and remain unchanged.
 
 Source mission and SiteWalk IDs are never reused. Identity-preserving partition or move semantics
 are not implemented because the public product interface does not expose the required lifecycle
 operation.
+
+### Experimental Orbit-native-shaped mode
+
+`build --identity-mode orbit-native` remaps the same selected objects as copy mode while changing
+their output representation. Waypoint IDs retain the observed word-word prefix and receive a new
+22-character Base64-style suffix. Waypoint snapshot and edge snapshot IDs retain their observed
+`snapshot_` and `edge_snapshot_id_` prefix families. Walk, SiteElement, and private SiteDock record
+IDs carry RFC 4122 UUID version-4 and variant bits.
+
+The mappings remain deterministic under the configured namespace and `--clone-name`; the UUIDv4-
+shaped values are therefore not claims that a robot or Orbit allocated those records. A new clone
+name produces a fully disjoint probe, while the manifest preserves every source-to-output mapping
+for audit. Graph topology, sensor snapshots, action payload semantics, physical fiducial numbers,
+and physical Dock numbers are unchanged.
+
+This mode exists to isolate ID representation as one Orbit import variable. It is not a supported
+replacement for recording on a robot, and offline validation cannot establish that Orbit will
+materialize public Walk Docks or Elements as server-side resources.
+
+### Experimental shared-identity mode
+
+`build --identity-mode preserve` constructs a different experiment from normal copy mode. It keeps
+waypoint, waypoint-snapshot, edge-snapshot, SiteElement, and source SiteDock record mappings as
+identity mappings. Edge identity is also retained implicitly because a GraphNav edge is identified
+by its endpoint waypoint pair. Anchor IDs and navigation targets continue to reference those same
+waypoints.
+
+The exported `Walk.id` is always new. Reusing it would identify the transport as the existing Walk
+rather than create a disposable container. A fleet-manager recording ID is not present in the
+public Walk and remains server-assigned at import. Public `Dock` has no SiteDock record UUID, so the
+source record ID is auditable in the bundle but not transported by the public archive.
+
+Preserve mode copies unchanged snapshots byte-for-byte and leaves SiteElement envelopes unchanged
+when both their element and waypoint identities are retained. Export-time recording-session
+relabeling is rejected because it would change metadata on a shared waypoint identity. The mode
+does not transfer Run, RunEvent, RunCapture, anomaly, or Site View history; whether Orbit associates
+existing history with a reused SiteElement is an import-time research question.
+
+For a native tablet `.walk` directory, `reissue-walk` is narrower still. It copies every source
+file byte-for-byte except the public mission payload and replaces only top-level `Walk` wire field
+8 (`id`). It deliberately avoids protobuf reserialization so unknown top-level fields and the raw
+Element/Dock submessages remain unchanged. Embedded DAQ `mission_id` values retain source mission
+provenance; only the new transport `Walk.id` changes. This intentional mismatch is an import-time
+experiment, not a claim of independent result-history ownership.
+
+The optional graph-only control removes top-level Walk fields 5 (Elements) and 6 (Docks) while
+also replacing field 8. It preserves the Graph and all source sidecars exactly. This control is
+expected to distinguish Orbit's SiteMap/GraphNav duplicate-data gate from SiteElement conflicts;
+it is not expected to bypass an all-objects-already-exist policy by itself.
+
+After the graph-only control reproduces the duplicate-data error, the navigation-only sentinel
+probe retains that control but inserts one new skipped Element with no action. Its target is copied
+from an observed source Element, so no new waypoint or edge is introduced. This distinguishes an
+all-objects-duplicate policy that counts SiteElements from one based only on GraphNav/recording
+ownership.
+
+If that probe is also treated as entirely duplicate, the disconnected-waypoint sentinel adds one
+new Waypoint, WaypointSnapshot ID, and matching Anchor ID while retaining every original GraphNav
+object. No edge is added, so the original topology is not extended. The cloned snapshot retains its
+source recording metadata; therefore another duplicate-data result is a deliberate stop condition
+indicating that a real new recording—not more UUID mutation—is needed.
 
 ## Ordinary action conversion
 
@@ -100,6 +186,22 @@ Autowalk messages:
 
 Observed `mission_id` values are retained as source provenance, not treated as current Walk
 membership. Existing mission order is intentionally not cloned.
+
+### Observed minimal Orbit materialization profile
+
+A controlled same-version import established one narrower successful profile. The Graph, snapshots,
+Dock raw submessage, global settings, and opaque metadata were retained from an earlier archive.
+The mission kept one observed DAQ Element as its first and only Element, issued fresh UUIDv4 Walk
+and Element IDs, and rewrote DAQ `mission_id` and `element_id` metadata to those identities. Orbit
+then materialized the Walk mission, DAQ action, and available Dock in its UI.
+
+The experiment did not change the GraphNav waypoint or snapshot IDs, so UUIDv5 Graph identity is
+compatible with this minimal SiteWalk conversion path. Later controls restored the actionless
+Localize and Sleep Elements on the full Graph. The all-UUIDv4 Element profile materialized; an
+otherwise equivalent archive with only the Localize Element changed to UUIDv5 completed upload but
+did not materialize its Site Map. A separate UUIDv5 DAQ profile succeeded. Orbit therefore has an
+Element-type-specific conversion boundary: UUIDv5 Graph identities and DAQ IDs can be accepted,
+while the observed navigation-only Localize path requires a UUIDv4 Element ID.
 
 An operator may explicitly request one synthetic public Sleep Element during export. It is never
 classified as a copied SiteElement: the export report records its source/cloned waypoint IDs,
@@ -167,8 +269,14 @@ The project uses explicit evidence levels:
 5. **Re-export** — a fresh backup or Walk export has no unexplained semantic differences.
 
 The current ordinary-action path has reached UI import with Orbit, Spot robot software, and tablet
-software all at version 5.1.8. Runtime and re-export remain user-run verification gates. Unsupported
-data is never promoted to a higher evidence level by inference.
+software all at version 5.1.8. Both a minimal DAQ-first profile and a full Localize/Sleep/DAQ profile
+with UUIDv4 Element IDs materialized their expected Walk resources and available Dock. A
+single-variable UUIDv5 Localize control completed upload but did not materialize its Site Map.
+The minimal DAQ-only mission was subsequently played on the robot and completed its PTZ capture,
+so that exact Action profile has reached the runtime level. Physical Dock return, broader Action
+coverage, result association, and re-export remain user-run verification gates. Unsupported data
+is never promoted to a higher evidence level by inference. See
+[orbit-walk-import-findings.md](orbit-walk-import-findings.md) for the complete evidence chain.
 
 ## Privacy model
 

@@ -9,15 +9,52 @@ The offline graph and ordinary-action conversion paths are structurally and sema
 A corrected small-zone archive has also been accepted and displayed by Orbit 5.1.8 in an
 environment where Orbit, the Spot robot software, and the tablet software were all version 5.1.8.
 That result verifies archive ingestion and UI representation for the exercised ordinary-action
-subset in that exact version combination. It does not establish robot playback, all action types,
+subset in that exact version combination. A later minimal DAQ mission was also executed on the
+robot and completed its PTZ capture. This does not establish every Action type, physical Dock use,
 cross-version compatibility, or historical-data migration.
+
+A later minimal materialization probe retained its previously accepted Graph and complete Dock
+evidence while making a DAQ action the first and only Walk Element. The Walk and Element used fresh
+UUIDv4 identities, and the DAQ metadata referenced those same identities. Orbit created the Walk
+mission and displayed both the DAQ action and the available Dock. The operator subsequently played
+that mission and confirmed PTZ capture completion, advancing the exact minimal DAQ profile to the
+runtime level. Physical Dock return, result association, and re-export gates remain open.
+
+Follow-up controls resolved that ambiguity. A full-map Walk containing the original actionless
+Localize, Sleep, DAQ, and Dock materialized when all Element IDs were UUIDv4. An otherwise
+equivalent control changed only the Localize ID to UUIDv5: upload completed, but the Site Map did
+not materialize. A UUIDv5 DAQ had already succeeded independently. The observed incompatibility is
+therefore the UUIDv5 navigation-only Localize path, not the Localize payload, Sleep, full Graph,
+multi-Element order, or UUIDv5 Elements in general.
+
+## Confirmed minimal materialization profile
+
+The successful private probe made only the following classes of mission change:
+
+- retained the Graph, waypoint and edge snapshots, Dock submessage, global parameters, playback
+  mode, interrupts, choreography, and opaque tablet metadata;
+- retained one observed DAQ Element's target, failure policies, wrapper, capture configuration,
+  capabilities, images, battery monitor, and duration;
+- issued fresh UUIDv4 Walk and Element IDs and made DAQ `mission_id` and `element_id` metadata match;
+- placed that DAQ as the first and only Element;
+- omitted the actionless navigation-only and Sleep Elements from this control.
+
+The later full-map controls establish the Orbit-targeted identity rule: issue fresh UUIDv4 Walk
+Element IDs, including actionless Localize and Sleep Elements, and keep DAQ metadata membership
+aligned with the current Walk and DAQ Element. Upload completion alone is not a pass; the Site Map,
+Walk mission, actions, and available Dock must materialize.
+
+The Graph and every non-mission archive payload were byte-identical to the earlier archive. This
+shows that native-looking GraphNav IDs or a newly recorded Graph are not necessary for that minimal
+Orbit profile. It does not authorize dropping unsupported Elements silently: exporters must either
+represent, explicitly exclude, or fail on them with an audit record.
 
 ## Choose a disposable zone
 
 Select a small area that contains representative but non-sensitive test actions:
 
 - ordinary odometry edges;
-- a manual edge when available;
+- a manually created edge when available;
 - a loop-closure edge when available;
 - an action with no image;
 - an action with a DAQ image;
@@ -55,8 +92,8 @@ uv run spot-map-forge validate-walk output/map-forge-poc-v2.walk.zip
 ```
 
 The generated Walk is a transport container, not a copy of an existing mission. Each ordinary
-action targets its remapped waypoint and retains the observed waypoint-relative body goal and
-navigation distance.
+action targets its remapped waypoint in clone mode or its shared waypoint in preserve mode, while
+retaining the observed waypoint-relative body goal and navigation distance.
 
 ## Manual import gates
 
@@ -80,6 +117,25 @@ The offline exporter controls the public Walk ID and waypoint session label, not
 recording UUID. Record only whether a new identity was assigned; do not copy that UUID into public
 test notes.
 
+### Additional gates for `--identity-mode preserve`
+
+Use a new disposable Walk name but do not pass `--recording-name`. Before runtime testing, require
+all of the following:
+
+1. the imported Walk has a new container identity while its selected waypoint and Element IDs match
+   the source export;
+2. Orbit creates or associates the intended new Site Map without modifying the source topology,
+   action definitions, schedules, or labels;
+3. re-exporting both objects shows identical shared waypoint/snapshot/Element payloads;
+4. an existing result remains attached to its original Run and RunEvent, and the UI does not claim
+   that history was copied merely because an Element ID is shared;
+5. disabling the disposable Walk does not disable the source action;
+6. deleting only the disposable test object does not remove a shared waypoint, snapshot, action, or
+   dock from the source.
+
+Any update-in-place, duplicate action, missing shared action, or cross-object deletion is a failed
+preserve-identity experiment.
+
 Record only pass/fail results in public project documentation. Do not publish the map name,
 screenshots, action names, coordinates, IDs, asset counts, or archive itself.
 
@@ -92,7 +148,8 @@ Run only in a controlled environment under normal Spot operating and safety proc
 3. Execute an ordinary no-image action.
 4. Execute representative DAQ and alignment-image actions.
 5. Confirm that the robot reaches the expected offset from the waypoint before capture.
-6. Verify that the captured output is associated with the new action.
+6. Verify that captured output is associated with the new action in clone mode or the intentionally
+   shared SiteElement in preserve mode.
 
 UI placement alone does not prove physical capture equivalence.
 
