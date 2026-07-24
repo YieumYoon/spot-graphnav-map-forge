@@ -6,8 +6,37 @@ with prerelease labels while compatibility remains alpha.
 
 ## [Unreleased]
 
+### Fixed
+
+- Made unpacked-extension reloads fail closed across synchronous, callback, and Promise-based
+  context invalidation; stale content instances now stop polling and overlays, pending requests
+  are cancelled, adapter sessions are replaced safely, and duplicate native mutation request IDs
+  are rejected.
+- Cancelled in-flight Connect validation when the page adapter is replaced; native dispatch,
+  read-back exceptions, timeouts, and context invalidation now fail as an unverified edit, record
+  history context, and lock later edits until operator acknowledgement.
+- Preserved absent and future Orbit edge-annotation fields during settings updates and rejected
+  exact read-back when Orbit drops an unmodeled field.
+- Distinguished edge-inferred Area references from authoritative Orbit Area catalog entries so
+  stale callback validation no longer treats a missing Area as present.
+
 ### Added
 
+- Orbit Site Map Editor 0.3 Walk workspace with read-only SiteWalk/SiteElement/mission-route
+  inspection, Action-order and Site View overlays, deterministic active-reachable graph walks,
+  start/Dock anchoring, disconnected and isolated exclusion with an explicit audit mode, bounded
+  NavigateRoute targets, minimal short-Sleep compatibility fallback, intentional Sleep planning,
+  mission-independent Site View eligibility coverage, optional source-SiteWalk Action sequencing,
+  stale-plan validation, and private JSON export.
+- Independent Orbit Site Map Editor extension with live waypoint/edge/recording search, selected
+  object Inspector, viewport-limited detail overlays, nearby unconnected waypoint candidates,
+  bounded native Connect validation, and one reviewed unsaved Connect draft.
+- Orbit Site Map Editor 0.2 workbench with universal live catalog search, query builder and results
+  table, named selection sets and selection algebra, graph/recording/spatial selection, validation
+  findings, path and reachability inspection, recording/findings/proposed-edit overlays, Connect
+  queues, reviewed batch Archive and edge-settings drafts, copy/paste and shareable presets,
+  crosswalk and settings audits, before/after plan previews, exact-ID plan import/export, draft
+  monitoring, and local JSON/CSV journals.
 - Public release hygiene checker and privacy guidance.
 - Compatibility matrix with explicit evidence levels.
 - Apache License 2.0, contribution guidance, and security policy.

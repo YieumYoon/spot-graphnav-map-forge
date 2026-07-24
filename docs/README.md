@@ -43,6 +43,14 @@ and is not the default way to split a Site Map in the same Orbit instance.
 
 ## Shared references
 
+- [Orbit Site Map Editor extension](../extension/orbit-site-map-editor/README.md) — live search,
+  detail overlay, connection candidates, and native Connect drafts.
+- [Site Map Editor feature research](orbit-site-map-editor-assistant-feature-research.md) — scoped
+  editor backlog and safety contract.
+- [Site Map Editor qualification](orbit-site-map-editor-qualification.md) — anonymized live
+  evidence and the post-upgrade runtime checklist.
+- [SiteWalk operational coverage planning](orbit-sitewalk-coverage-planning.md) — read-only Action
+  inspection, active-reachable graph coverage, and minimal Sleep compatibility fallback.
 - [Python package workflow boundaries](../src/spot_graphnav_map_forge/README.md)
 - [Privacy guide](privacy.md)
 - [Security policy](../SECURITY.md)

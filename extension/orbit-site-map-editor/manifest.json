@@ -1,0 +1,42 @@
+{
+  "manifest_version": 3,
+  "name": "Orbit Site Map Editor",
+  "description": "Adds exact-ID editing, graph validation, and mission-independent Site View coverage planning to the Orbit Site Map editor.",
+  "version": "0.5.0",
+  "permissions": [
+    "storage"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*/control_room/maps/*/edit*"
+      ],
+      "css": [
+        "panel.css"
+      ],
+      "js": [
+        "extension-context.js",
+        "model.js",
+        "query.js",
+        "selection.js",
+        "validation.js",
+        "workflow.js",
+        "walk-planner.js",
+        "content.js",
+        "advanced.js",
+        "walk-ui.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "page-bridge.js"
+      ],
+      "matches": [
+        "https://*/*"
+      ]
+    }
+  ]
+}

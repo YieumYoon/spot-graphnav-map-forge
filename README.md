@@ -152,6 +152,7 @@ Do not treat a generated `.walk.zip` as an Orbit-supported Site Map copy. Follow
 ## Documentation
 
 - [Documentation index](docs/README.md)
+- [Orbit Site Map Editor](extension/orbit-site-map-editor/README.md)
 - [Orbit-native Site Map split](docs/workflows/orbit-native-map-split.md)
 - [Operation journal template](docs/workflows/orbit-native-operation-journal-template.md)
 - [Orbit Site Map Assistant](extension/orbit-graph-repair/README.md)

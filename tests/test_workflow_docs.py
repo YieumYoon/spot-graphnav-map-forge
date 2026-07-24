@@ -13,8 +13,11 @@ PUBLIC_GUIDES = (
     ROOT / "docs" / "workflows" / "orbit-native-map-split.md",
     ROOT / "docs" / "workflows" / "orbit-native-operation-journal-template.md",
     ROOT / "docs" / "workflows" / "offline-map-clone.md",
+    ROOT / "docs" / "orbit-site-map-editor-assistant-feature-research.md",
+    ROOT / "docs" / "orbit-site-map-editor-qualification.md",
     ROOT / "extension" / "README.md",
     ROOT / "extension" / "orbit-graph-repair" / "README.md",
+    ROOT / "extension" / "orbit-site-map-editor" / "README.md",
     ROOT / "src" / "spot_graphnav_map_forge" / "README.md",
 )
 MARKDOWN_LINK = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
