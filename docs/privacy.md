@@ -18,7 +18,7 @@ performed.
 | source backup `.tar` | Private source data; always read-only |
 | `graph-baseline.json` | Exact Site Map, recording, waypoint, edge, and settings identities |
 | reconciliation report | Exact differences and affected endpoint IDs |
-| extension export or journal | Selections, findings, plans, and live object details |
+| extension preset/plan export or operation journal | Selections, findings, plans, and live object details |
 | screenshots or browser logs | Layout, names, IDs, paths, and UI state |
 
 Keep these under ignored `workspace/`, `output/`, or another access-controlled location. Git

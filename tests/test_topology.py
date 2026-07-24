@@ -221,6 +221,34 @@ def test_graph_baseline_cli_preserves_effective_edges_and_tombstones(tmp_path) -
     assert "operator deletion" in baseline["limitations"]["tombstone_origin"]
 
 
+def test_inspect_cli_reports_the_read_only_map_inventory(tmp_path, capsys) -> None:
+    backup = tmp_path / "backup.tar"
+    _backup(
+        backup,
+        active_site_edges=(("wp-2", "wp-4", 7),),
+        tombstones=(("wp-2", "wp-3", 1),),
+    )
+
+    assert main(["inspect", str(backup), "--json"]) == 0
+
+    inventory = json.loads(capsys.readouterr().out)
+    assert inventory["site_maps"] == [
+        {
+            "actions": 0,
+            "docks": 0,
+            "explicit_relocalizations": 0,
+            "id": "site-map-1",
+            "name": "Test Map",
+            "pano_states": 0,
+            "recordings": 0,
+            "triggered_actions": 0,
+            "waypoints": 4,
+        }
+    ]
+    assert inventory["actions_total"] == 0
+    assert inventory["docks_total"] == 0
+
+
 def test_reconcile_graph_cli_reads_baseline_and_final_backup_without_workspace(
     tmp_path,
 ) -> None:
