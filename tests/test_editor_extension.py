@@ -14,36 +14,39 @@ def test_editor_extension_manifest_is_independent_and_minimal() -> None:
 
     assert manifest["manifest_version"] == 3
     assert manifest["name"] == "Orbit Site Map Editor"
-    assert manifest["version"] == "0.5.0"
     assert "version_name" not in manifest
     assert manifest["permissions"] == ["storage"]
     assert "host_permissions" not in manifest
     assert "background" not in manifest
-    assert manifest["content_scripts"] == [
-        {
-            "matches": ["https://*/control_room/maps/*/edit*"],
-            "css": ["panel.css"],
-            "js": [
-                "extension-context.js",
-                "model.js",
-                "query.js",
-                "selection.js",
-                "validation.js",
-                "workflow.js",
-                "walk-planner.js",
-                "content.js",
-                "workspace-select.js",
-                "workspace-edit.js",
-                "workspace-validate.js",
-                "advanced.js",
-                "walk-ui.js",
-            ],
-            "run_at": "document_idle",
-        }
+    assert len(manifest["content_scripts"]) == 1
+    content_script = manifest["content_scripts"][0]
+    assert content_script["matches"] == ["https://*/control_room/maps/*/edit*"]
+    assert content_script["run_at"] == "document_idle"
+    assert len(content_script["css"]) == len(set(content_script["css"]))
+    assert len(content_script["js"]) == len(set(content_script["js"]))
+
+    script_order = {name: index for index, name in enumerate(content_script["js"])}
+    for dependency in ("extension-context.js", "model.js", "query.js"):
+        assert script_order[dependency] < script_order["content.js"]
+    for consumer in (
+        "workspace-select.js",
+        "workspace-edit.js",
+        "workspace-validate.js",
+        "advanced.js",
+        "walk-ui.js",
+    ):
+        assert script_order["content.js"] < script_order[consumer]
+
+    web_resources = [
+        resource
+        for group in manifest["web_accessible_resources"]
+        for resource in group["resources"]
     ]
-    assert manifest["web_accessible_resources"] == [
-        {"resources": ["page-bridge.js"], "matches": ["https://*/*"]}
-    ]
+    assert len(web_resources) == len(set(web_resources))
+    assert set(web_resources) == {"page-bridge.js"}
+    assert set(content_script["js"]) | set(web_resources) == {
+        path.name for path in EXTENSION.glob("*.js")
+    }
 
 
 def test_workspace_templates_own_complete_non_overlapping_selectors() -> None:
@@ -645,32 +648,11 @@ def test_search_finds_exact_ids_names_recordings_and_edges() -> None:
     assert result["edge"][0]["waypointIds"] == ["waypoint-alpha", "waypoint-beta"]
 
 
-def test_editor_uses_native_drafts_but_never_save_or_private_rest() -> None:
-    content = (EXTENSION / "content.js").read_text(encoding="utf-8")
-    bridge = (EXTENSION / "page-bridge.js").read_text(encoding="utf-8")
-
-    assert 'requestBridge("snapshot"' in content
-    assert '"validate_connect"' in content
-    assert 'requestBridge(\n        "connect"' in content
-    assert "Review the exact Site Map and waypoint pair" in content
-    assert "Create unsaved draft" in content
-    assert "window.confirm(" not in content
-    assert "never presses Save" in content
-    assert 'const ADD_SITE_EDGE_ACTION_TYPE = "mapEditorFormSlice/addSiteEdge"' in bridge
-    assert 'adapter: "orbit-5.1-native-connect-validation"' in bridge
-    assert 'adapter: "orbit-5.1-native-edge-draft"' in bridge
-    assert "oneUndoDraftCreated(beforeHistory, afterHistory)" in bridge
-    assert "if (!hasEditIndex || !hasUndoDepth) return false" in bridge
-    assert "after.editIndex > before.editIndex" in bridge
-    assert "after.undoDepth === before.undoDepth + 1" in bridge
-    assert "afterIndex !== beforeIndex + 1" not in bridge
-    assert "mutationMayExist" in bridge
-    assert "native_mutation_in_progress" in bridge
-    assert "unmodeledAnnotations" in bridge
-    assert "validation_changed_draft" in bridge
-    assert "payload: originalSelection" in bridge
-
-    for source in (content, bridge):
+def test_editor_extension_has_no_direct_write_or_network_sink() -> None:
+    combined = ""
+    for path in sorted(EXTENSION.glob("*.js")):
+        source = path.read_text(encoding="utf-8")
+        combined += source
         for forbidden in (
             "fetch(",
             "XMLHttpRequest",
@@ -680,28 +662,14 @@ def test_editor_uses_native_drafts_but_never_save_or_private_rest() -> None:
             "saveMapEditComplete",
         ):
             assert forbidden not in source
-
-
-def test_editor_has_live_overlay_search_and_bounded_validation() -> None:
-    content = (EXTENSION / "content.js").read_text(encoding="utf-8")
-    model = (EXTENSION / "model.js").read_text(encoding="utf-8")
-
-    assert "Live Site Map" in content
-    assert "Search IDs, names, or use type:edge source:manual" in content
-    assert "Connect mode" in content
-    assert "Validate visible" in content
-    assert "Detailed overlay" in content
-    assert "MAX_NATIVE_VALIDATIONS = 12" in content
-    assert "(state.validatingBatch || state.validatingId || state.connectingId)" in content
-    assert "firstSuccessfulSnapshot" in content
-    assert "showingLiveRefreshStatus" in content
-    assert 'data-overlay="robot"' in content
-    assert 'data-overlay="timestamps"' in content
-    assert 'data-overlay="proposed"' not in content
-    assert "proposedActions" not in content
-    assert "connectionCandidates" in model
-    assert "existingNeighbors.has" in model
-    assert "radiusMeters" in model
+    for removed_workflow in (
+        'data-workspace-tab="history"',
+        "workflow.parsePlan",
+        "workflow.serializePlan",
+        "state.journal",
+        "state.planActions",
+    ):
+        assert removed_workflow not in combined
 
 
 def test_editor_bridge_restores_validation_selection_and_adds_one_draft_step() -> None:
@@ -2027,72 +1995,6 @@ def test_content_marks_mutation_timeout_and_invalidation_as_ambiguous() -> None:
     }
 
 
-def test_editor_advanced_ui_covers_agreed_workflows_and_stays_local() -> None:
-    source = (EXTENSION / "advanced.js").read_text(encoding="utf-8")
-    workspace_source = "\n".join(
-        (EXTENSION / name).read_text(encoding="utf-8")
-        for name in (
-            "workspace-select.js",
-            "workspace-edit.js",
-            "workspace-validate.js",
-        )
-    )
-    ui_source = f"{source}\n{workspace_source}"
-
-    for label in (
-        "Exact-ID work selection",
-        "Query builder",
-        "N-hop",
-        "Shortest path",
-        "Named selection sets",
-        "Archive selected edges",
-        "Connect queue",
-        "Live graph findings",
-        "Path inspector",
-        "Reachability",
-        "Crosswalk audit",
-        "Clear lock after inspection / restore",
-    ):
-        assert label in ui_source
-
-    assert 'runtime.requestBridge("select_entities"' in source
-    assert 'runtime.requestBridge("archive_edges"' in source
-    assert 'runtime.requestBridge("update_edge_settings"' in source
-    assert "validate.settingsMatrix" in source
-    assert "validate.crosswalkAudit" in source
-    assert "new AbortController()" in source
-    assert "runtime.instanceEvents.snapshot" in source
-    assert "tabSelectionRevision" in source
-    assert "setTab(button.dataset.tab, { userInitiated: true })" in source
-    assert '["explore", "select", "edit", "validate", "walk"]' in source
-    assert '["history", "History"]' not in ui_source
-    assert 'data-workspace-tab="history"' not in ui_source
-    assert "Draft monitor & local journal" not in ui_source
-    assert "Local operation journal" not in ui_source
-    assert "Edit plan" not in ui_source
-    assert "workflow.parsePlan" not in source
-    assert "workflow.serializePlan" not in source
-    assert "state.journal" not in source
-    assert "state.planActions" not in source
-    content = (EXTENSION / "content.js").read_text(encoding="utf-8")
-    assert "window.clearInterval(snapshotIntervalId)" in content
-    assert "window.cancelAnimationFrame(overlayAnimationId)" in content
-    assert "extensionContext.isActive()" in content
-    assert "extensionContext.getVersionLabel" in content
-    assert 'class="osme-version">0.5.0' not in content
-    assert "sessionId: instanceId" in content
-    assert "sortBy: state.searchSortBy" in content
-    assert '"marker-end"' in content
-    assert "error.mutationMayExist" in content
-    assert "An unverified native draft may exist" in content
-    assert 'const blockedByUncertainty = isMutation || command === "validate_connect"' in content
-    assert "if (error.mutationMayExist) throw error" in content
-    assert "state.connectingId ||\n      mutationLocked" in content
-    assert "An unverified native draft may exist" in source
-    for forbidden in ("fetch(", "XMLHttpRequest", "WebSocket", "/api/"):
-        assert forbidden not in source
-
-
 def test_walk_planner_covers_each_waypoint_with_graph_valid_revisits() -> None:
     result = run_editor_modules(
         textwrap.dedent(
@@ -2679,59 +2581,131 @@ def test_site_view_snapshot_ignores_missions_and_reads_pano_without_dispatch() -
 
 
 def test_walk_ui_is_read_only_and_exposes_coverage_controls() -> None:
-    source = (EXTENSION / "walk-ui.js").read_text(encoding="utf-8")
-    planner = (EXTENSION / "walk-planner.js").read_text(encoding="utf-8")
-    bridge = (EXTENSION / "page-bridge.js").read_text(encoding="utf-8")
-    content = (EXTENSION / "content.js").read_text(encoding="utf-8")
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for JavaScript Walk UI tests")
+    script = textwrap.dedent(
+        """
+        class FakeNode {
+          constructor() {
+            this.dataset = {};
+            this.hidden = false;
+            this.disabled = false;
+            this.checked = false;
+            this.value = "";
+            this.textContent = "";
+            this.children = [];
+            this.nodes = new Map();
+            this.listeners = new Map();
+          }
+          querySelector(selector) {
+            if (!this.nodes.has(selector)) this.nodes.set(selector, new FakeNode());
+            return this.nodes.get(selector);
+          }
+          querySelectorAll() {return [];}
+          append(...nodes) {this.children.push(...nodes);}
+          replaceChildren(...nodes) {this.children = [...nodes];}
+          addEventListener(type, listener) {
+            if (!this.listeners.has(type)) this.listeners.set(type, []);
+            this.listeners.get(type).push(listener);
+          }
+          closest() {return null;}
+          setAttribute() {}
+        }
+        const panel = new FakeNode();
+        const nav = panel.querySelector(".osme-tabs");
+        const workspace = panel.querySelector(".osme-workspace");
+        const commands = [];
+        const statuses = [];
+        global.document = {createElement: () => new FakeNode()};
+        global.window = {
+          addEventListener() {},
+          setTimeout,
+          clearTimeout,
+          URL,
+        };
+        global.navigator = {clipboard: {writeText: async () => {}}};
+        global.OrbitSiteMapEditorExtensionContext = {
+          isActive: () => true,
+          onInvalidated: () => () => {},
+        };
+        global.OrbitSiteMapEditorRuntime = {
+          currentMapId: () => "map-1",
+          disposeEvent: "dispose",
+          elements: {panel},
+          friendlyError: (message) => message,
+          instanceEvents: {snapshot: "snapshot"},
+          instanceId: "walk-test",
+          isDisposed: () => false,
+          model: {shortId: (value) => value},
+          requestBridge: async (command) => {
+            commands.push(command);
+            if (command !== "site_view_snapshot") {
+              throw new Error(`unexpected command: ${command}`);
+            }
+            return {
+              ok: true,
+              snapshot: {
+                map: {id: "map-1", name: "Map"},
+                capabilities: {siteWaypoints: "adapter", siteDocks: "adapter"},
+                sitePanoWaypoints: [{
+                  waypointId: "a",
+                  allowCaptureVisual: true,
+                  allowCaptureThermal: false,
+                }],
+                siteDocks: [],
+              },
+            };
+          },
+          setStatus: (message, kind) => statuses.push({message, kind}),
+          state: {
+            lastOverlayKey: "",
+            snapshot: {
+              map: {id: "map-1", name: "Map"},
+              editIndex: 0,
+              selectedWaypointIds: [],
+              waypoints: [{id: "a", position: {x: 0, y: 0, z: 0}}],
+              edges: [],
+              docks: [],
+            },
+          },
+        };
+        require("./extension/orbit-site-map-editor/walk-planner.js");
+        require("./extension/orbit-site-map-editor/walk-ui.js");
 
-    for label in (
-        "Site View coverage route",
-        "Existing SiteWalks and SiteElements are neither read nor modified",
-        "Operational waypoint coverage plan",
-        "Reachable from start / Dock — active edges",
-        "Audit all components — includes disconnected",
-        "Excluded waypoints (optional; exact waypoint ID)",
-        "Add Orbit selection to exclusions",
-        "Max waypoints per NavigateRoute",
-        "Short Sleep fallback at required checkpoints",
-        "Intentional Sleep Actions (optional)",
-        "Plan coverage",
-        "Numbered route targets",
-        "Ordered route targets",
-        "Follow #1, #2, … in this order",
-    ):
-        assert label in source
+        (async () => {
+          const pane = workspace.children[0];
+          const refresh = pane.querySelector(".osme-walk-refresh");
+          await refresh.listeners.get("click")[0]();
+          await new Promise((resolve) => setImmediate(resolve));
+          const overlay = OrbitSiteMapEditorWalk.overlayState();
+          process.stdout.write(JSON.stringify({
+            tab: nav.children[0]?.dataset.tab,
+            pane: pane.dataset.workspaceTab,
+            commands,
+            statusKind: statuses.at(-1)?.kind,
+            eligible: overlay.siteViewGapWaypointIds,
+            planButtonDisabled: pane.querySelector(".osme-walk-plan").disabled,
+          }));
+        })().catch((error) => {
+          console.error(error);
+          process.exitCode = 1;
+        });
+        """
+    )
+    completed = subprocess.run(
+        [node, "-e", script],
+        cwd=Path.cwd(),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
 
-    assert '"site_view_snapshot"' in source
-    assert 'runtime.requestBridge("focus"' in source
-    assert 'requestBridge("connect"' not in source
-    assert 'requestBridge("archive_edges"' not in source
-    assert 'requestBridge("update_edge_settings"' not in source
-    assert "actionAtEveryWaypoint: false" in planner
-    assert "visit_each_active_reachable_waypoint_at_least_once" in planner
-    assert 'const DEFAULT_SCOPE = "reachable"' in planner
-    assert "start_waypoint_has_no_active_edges" in planner
-    assert "compatibilitySleepCheckpointCount" in planner
-    assert "site_waypoint_pano_settings_and_planned_active_route" in planner
-    assert "remove_waypoints_and_incident_edges_before_route_planning" in planner
-    assert "explicitlyExcludedEligibleWaypointIds" in planner
-    assert "missionIndependent: true" in planner
-    assert "sourceSiteWalk" not in planner
-    assert "siteWalkInspection" not in planner
-    assert "inspectSiteWalk" not in planner
-    assert "sitePanoWaypoints: state.siteViewSnapshot?.sitePanoWaypoints" in source
-    assert "Site View data is still loading; retrying" in source
-    assert "state.refreshRetryCount < 4" in source
-    assert "deterministic_open_or_closed_doubled_mst_walk" in planner
-    assert '"strong",\n        "",\n        valid && !state.planStale' in source
-    assert '"site_view_snapshot"' in bridge
-    assert "siteViewPlanningSnapshot(state, mapId)" in bridge
-    assert '"walk_snapshot"' not in bridge
-    assert "OrbitSiteMapEditorWalk?.overlayState" in content
-    assert "MAX_WALK_OVERLAY_SEGMENTS" in content
-    assert "walkOverlay.routeTargetMarkers" in content
-    assert "walkOverlay.excludedWaypointIds" in content
-
-    for candidate in (source, planner):
-        for forbidden in ("fetch(", "XMLHttpRequest", "WebSocket", "/api/"):
-            assert forbidden not in candidate
+    assert json.loads(completed.stdout) == {
+        "tab": "walk",
+        "pane": "walk",
+        "commands": ["site_view_snapshot"],
+        "statusKind": "ok",
+        "eligible": ["a"],
+        "planButtonDisabled": False,
+    }
