@@ -1,124 +1,35 @@
 # Changelog
 
-All notable project changes are documented here. The format follows
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses semantic versioning
-with prerelease labels while compatibility remains alpha.
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### Fixed
-
-- Made unpacked-extension reloads fail closed across synchronous, callback, and Promise-based
-  context invalidation; stale content instances now stop polling and overlays, pending requests
-  are cancelled, adapter sessions are replaced safely, and duplicate native mutation request IDs
-  are rejected.
-- Cancelled in-flight Connect validation when the page adapter is replaced; native dispatch,
-  read-back exceptions, timeouts, and context invalidation now fail as an unverified edit, record
-  history context, and lock later edits until operator acknowledgement.
-- Preserved absent and future Orbit edge-annotation fields during settings updates and rejected
-  exact read-back when Orbit drops an unmodeled field.
-- Distinguished edge-inferred Area references from authoritative Orbit Area catalog entries so
-  stale callback validation no longer treats a missing Area as present.
-
-### Added
-
-- Repo-local Orbit extension development skill, manifest-derived development build labels,
-  one-command static qualification, serialized live-Chrome guidance, and separately owned
-  Select/Edit/Validate workspace templates for parallel Worktree development.
-- Orbit Site Map Editor 0.3 Walk workspace with read-only SiteWalk/SiteElement/mission-route
-  inspection, Action-order and Site View overlays, deterministic active-reachable graph walks,
-  start/Dock anchoring, disconnected and isolated exclusion with an explicit audit mode, bounded
-  NavigateRoute targets, minimal short-Sleep compatibility fallback, intentional Sleep planning,
-  mission-independent Site View eligibility coverage, optional source-SiteWalk Action sequencing,
-  stale-plan validation, and private JSON export.
-- Independent Orbit Site Map Editor extension with live waypoint/edge/recording search, selected
-  object Inspector, viewport-limited detail overlays, nearby unconnected waypoint candidates,
-  bounded native Connect validation, and one reviewed unsaved Connect draft.
-- Orbit Site Map Editor 0.2 workbench with universal live catalog search, query builder and results
-  table, named selection sets and selection algebra, graph/recording/spatial selection, validation
-  findings, path and reachability inspection, recording/findings/proposed-edit overlays, Connect
-  queues, reviewed batch Archive and edge-settings drafts, copy/paste and shareable presets,
-  crosswalk and settings audits, before/after plan previews, exact-ID plan import/export, draft
-  monitoring, and local JSON/CSV journals.
-- Public release hygiene checker and privacy guidance.
-- Compatibility matrix with explicit evidence levels.
-- Apache License 2.0, contribution guidance, and security policy.
-- Same-instance verification checklist for disposable imports.
-- An anonymized Orbit Walk import findings report covering controlled probes, identity rules,
-  recording boundaries, Dock/Action requirements, edge transport, and triggered AI handling.
-- Project motivation, primary user groups, and map-partitioning use cases.
-- Optional unanchored and dependency-free disconnected-component cleanup with plan/audit records.
-- Exact, reason-bearing exclusion for operator-confirmed incomplete or orphaned triggered records.
-- Export-time waypoint recording-session relabeling and archive-name-derived deterministic Walk
-  identities.
-- Experimental preserve-identity build mode for shared GraphNav objects and SiteElements inside a
-  new Walk transport container.
-- Experimental Orbit-native-shaped identity mode that keeps clone topology and payloads while
-  emitting tablet-shaped GraphNav IDs and deterministic UUIDv4-shaped Walk/Orbit object IDs.
-- Byte-preserving `reissue-walk` experiment for tablet recording directories that changes only the
-  top-level public Walk ID while retaining GraphNav, Element, Dock, opaque, and DAQ provenance data.
-- Graph-only reissue control that strips Walk Elements and Docks to isolate Orbit SiteMap duplicate
-  handling from action identity conflicts.
-- Minimal skipped navigation-only Element probe for distinguishing SiteElement-aware duplicate
-  handling from GraphNav/recording-only SiteMap novelty checks.
-- Disconnected waypoint/snapshot/anchor sentinel probe with an explicit stop condition when Orbit
-  deduplicates underlying recording data despite fresh GraphNav object IDs.
-- Read-only graph reconciliation for Orbit-native recording moves, including raw-edge fallback,
-  SiteEdge tombstones, intentional partition cuts, and an interactive waypoint-pair connect/delete
-  guide.
-- Unpacked Manifest V3 Orbit overlay that imports the reconciliation guide, focuses exact waypoint
-  pairs with Orbit's in-page fit action, resolves current anchor coordinates, and draws CONNECT or
-  DELETE markers without calling server APIs or saving map changes.
-- Read-only Orbit selected-entity inspector and map-health summary with exact waypoint, edge, and
-  recording ID joins; edge provenance, disabled/archive and cross-recording status; coordinates,
-  degree, neighbor context, and copy controls.
-- One-at-a-time native Orbit CONNECT assistance that selects exact waypoint IDs, waits for Orbit's
-  own edge validator, rejects warnings and duplicates, adds only an unsaved editor draft, verifies
-  the edit-history increment, and never presses Save.
-- One-at-a-time native Orbit Archive assistance that selects the exact canonical edge in edge mode,
-  repeats Orbit's anchoring warning, creates and verifies the same `nonEntities` tombstone as the
-  native UI, and never presses Save.
-- Complete B0 public edge-annotation capture, including edge-scoped crosswalk callbacks, mobility
-  profiles, direction/path/ground/route behavior, cost, and audio/visual settings.
-- Native Orbit edge-settings reconciliation with per-edge, crosswalk-only, and all-pending restore
-  controls; stale-state and stored-direction guards; one verified Undo step; and no automatic Save.
-- Local unlimited-storage permission and explicit storage-error handling for large private B0
-  setting inventories; no network or host permission is added.
-- Reusable Orbit Site Map Assistant knowledge base covering the effective-topology model, exact-ID
-  induced-subgraph comparison, native draft semantics, staged operator runbook, AI-agent contract,
-  compatibility qualification, privacy boundary, and production-scale settings validation.
-- Separate workflow documentation and repository navigation that makes the Orbit-native recording
-  split plus Site Map Assistant the recommended same-instance path while isolating offline
-  GraphNav/Walk cloning and import probes as an experimental workflow.
-
 ### Changed
 
-- Aligned operator-facing terminology with Orbit (**Site Map**, **recording**, **Archive**, and
-  **edge settings**) and shortened the public workflow guides into direct procedures. Internal
-  reconciliation operation values remain unchanged for guide-file compatibility.
-- Positioned the project as an offline zone-map clone tool rather than an identity-preserving
-  migration utility.
-- Documented a successful UI import for an anonymized ordinary-action zone with Orbit, Spot robot
-  software, and tablet software all at version 5.1.8.
-- Documented full-map single-variable controls: Localize, Sleep, DAQ, and Dock materialized with
-  UUIDv4 Element IDs, while changing only the navigation-only Localize ID to UUIDv5 completed
-  upload but prevented Site Map materialization; a separate UUIDv5 DAQ control succeeded.
-- Documented successful robot playback and PTZ capture for the minimal UUIDv4 DAQ-only profile,
-  while retaining Dock return, broader Action coverage, result association, and re-export as gates.
-- Replaced deployment-specific documentation and identifiers with synthetic examples.
-- Preserved fail-closed triggered AI behavior while making explicit omissions auditable.
+- Made the Orbit Site Map Editor the primary product and retained the Migration Assistant as a
+  separate same-instance workflow.
+- Reduced the Python CLI to read-only `inspect`, `graph-baseline`, and `reconcile-graph` commands.
+- Changed final-backup reconciliation to consume the immutable B0 baseline directly instead of a
+  clone workspace.
+- Added an active-boundary check that rejects legacy generators, commands, imports, and network
+  clients from the active Python package.
 
-### Removed
+### Archived
 
-- Generated Walk archives, map screenshots, browser logs, caches, and build artifacts from the
-  public source tree.
-
-## [0.1.0a1] - Unreleased
+- Preserved the offline GraphNav/Walk clone, ID-remapping, bundle-generation, Walk-packaging,
+  loopback-editor, and import-probe implementation at branch and annotated tag
+  `archive/offline-clone-2026-07`.
+- Removed that implementation and its operator workflow from the default branch and package.
 
 ### Added
 
-- Backup inventory and final Site Map graph reconstruction.
-- Polygon and halo planning with a loopback-only editor.
-- Deterministic GraphNav, snapshot, action, and dock identity cloning.
-- Ordinary action, relative target, and image conversion to public Autowalk archives.
-- Structural validation, preservation audit, and fail-closed triggered AI handling.
+- Orbit Site Map Editor with Explore, Select, Edit, Validate, and Walk workspaces.
+- Orbit Site Map Migration Assistant for B0-based Connect, Archive, and edge-settings recovery.
+- Repo-local extension development Skill, transient build labels, deterministic qualification,
+  and serialized live-Chrome rules.
+- Read-only backup inventory, effective topology, B0 baseline, and final-backup comparison.
+
+## [0.1.0a1] - Archived
+
+The experimental offline clone research state is preserved at
+`archive/offline-clone-2026-07`. See [the archive summary](docs/legacy/offline-clone.md).

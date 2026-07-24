@@ -1,4 +1,4 @@
-from spot_graphnav_map_forge.wire import WireError, WireField, decode_fields, encode_fields
+from spot_graphnav_map_forge.wire import WireError, decode_fields
 
 
 def test_decode_common_wire_types() -> None:
@@ -17,16 +17,3 @@ def test_rejects_truncated_field() -> None:
         assert "truncated" in str(exc)
     else:
         raise AssertionError("expected WireError")
-
-
-def test_encode_fields_round_trips_supported_wire_types() -> None:
-    fields = (
-        WireField(1, 0, 150),
-        WireField(2, 2, b"map"),
-        WireField(3, 5, 0x12345678),
-        WireField(4, 1, 0x0123456789ABCDEF),
-    )
-
-    encoded = encode_fields(fields)
-
-    assert decode_fields(encoded) == fields

@@ -77,9 +77,10 @@ Run:
 uv run python scripts/check_editor_extension.py --full --release
 ```
 
-The canonical gate validates manifest references and dynamic build labels, checks every extension
-JavaScript file, runs the full pytest suite, and checks Ruff lint and formatting. Omit `--release`
-while a transient development `version_name` is active.
+The canonical gate validates the active-package read-only boundary, manifest references and
+dynamic build labels, checks every extension JavaScript file, runs the full pytest suite, and
+checks Ruff lint and formatting. Omit `--release` while a transient development `version_name` is
+active.
 
 The bridge simulations cover selection restoration, warning and duplicate rejection, exact live
 catalog projection, multi-object native selection, and exactly one Connect, batch Archive, or edge

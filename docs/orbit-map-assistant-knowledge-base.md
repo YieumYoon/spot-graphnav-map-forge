@@ -138,7 +138,7 @@ waypoint**. The extension excludes:
 
 - the extra waypoint itself;
 - every edge incident to that waypoint;
-- all CONNECT, DELETE, and UPDATE guidance for that incident edge.
+- all Connect, Archive, and Edge settings guidance for that incident edge.
 
 This is intentional. B0 cannot state what the newer recording should contain, so interpreting those
 edges as unexpected would generate false deletions. The panel reports the ignored waypoint and edge
@@ -192,7 +192,7 @@ The input backup and generated baseline are private operational artifacts. Do no
 
 - validate and normalize the imported baseline;
 - request a bounded live graph snapshot;
-- derive CONNECT, DELETE, UPDATE, and boundary-cut records;
+- derive Connect, Archive, Edge settings, and Site Map boundary records;
 - render the panel, inspector, progress, and SVG overlays;
 - store the normalized baseline and local completion state;
 - require user confirmation before Archive or settings restoration;
@@ -506,7 +506,7 @@ the persistence check.
 After all intended edits:
 
 1. Refresh the live comparison.
-2. Confirm CONNECT, DELETE, and UPDATE are zero except consciously deferred work.
+2. Confirm Connect, Archive, and Edge settings are zero except consciously deferred work.
 3. Confirm the remaining cuts equal the reviewed recording boundary.
 4. Confirm ignored extras match known newer recordings.
 5. Reopen the map or make a B1 backup when persistence evidence is required.
@@ -588,7 +588,7 @@ One anonymized production-scale validation used:
 - result map: 3,225 waypoints across 34 recordings;
 - desired B0-induced subgraph: 2,642 edges;
 - ignored newer scope: 18 waypoints and 16 incident edges;
-- comparison: 8 CONNECT, 0 DELETE, 2,428 UPDATE, 112 crosswalk UPDATE, and 6 boundary cuts;
+- comparison: 8 Connect, 0 Archive, 2,428 Edge settings, 112 crosswalk settings, and 6 Site Map boundary items;
 - direction-blocked settings updates: 0.
 
 The settings restoration was deliberately staged:
@@ -598,7 +598,7 @@ The settings restoration was deliberately staged:
 2. The remaining 2,316 profiles produced a second native unsaved draft and one Undo step; the
    operator reviewed and saved it.
 
-The extension reported zero pending setting updates after the second batch. CONNECT and boundary-cut
+The extension reported zero pending Edge settings after the second batch. Connect and Site Map boundary
 records remained separate and were not silently folded into the settings operation.
 
 This validates the batch-draft and read-back mechanism at that scale on Orbit 5.1.8. It does not
@@ -681,15 +681,15 @@ logs.
 
 Topology and settings are different operations:
 
-- CONNECT/DELETE modify membership of the effective edge set;
-- UPDATE replaces the public profile on an already active edge;
-- a newly connected edge cannot have been included in the earlier UPDATE guide.
+- Connect/Archive modify membership of the effective edge set;
+- Edge settings replaces the public profile on an already active edge;
+- a newly connected edge cannot have been included in the earlier Edge settings guide.
 
 Refresh after topology changes before assuming settings reconciliation is complete.
 
 ### Crosswalk-only is a risk-reduction stage
 
-The crosswalk button is not a different serialization path. It filters UPDATE actions whose profile
+The crosswalk button is not a different serialization path. It filters internal `update` actions whose profile
 contains or previously contained a crosswalk callback, then restores each complete profile through
 the same native action.
 

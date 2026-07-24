@@ -23,18 +23,7 @@ def _topology(waypoint_ids, edges, tombstones=()):
     }
 
 
-def _waypoint(waypoint_id, x):
-    return {
-        "id": waypoint_id,
-        "name": waypoint_id.upper(),
-        "session_name": "session",
-        "x": x,
-        "y": 0.0,
-        "source": "propagated_map_layout",
-    }
-
-
-def test_reconciliation_guide_marks_manual_connect_and_resurrected_delete() -> None:
+def test_reconciliation_guide_marks_manual_connect_and_resurrected_archive() -> None:
     before = _topology(
         ("a", "b", "c", "d"),
         (
@@ -51,20 +40,31 @@ def test_reconciliation_guide_marks_manual_connect_and_resurrected_delete() -> N
             _edge("a", "c"),
         ),
     )
-    waypoints = [_waypoint(value, index) for index, value in enumerate(("a", "b", "c", "d"))]
+    guide = build_reconciliation_guide(before, after)
 
-    guide = build_reconciliation_guide(before, after, waypoints)
-
-    assert not guide["graph_reconciled"]
+    assert not guide["fully_reconciled"]
+    assert guide["graph_reconciled"] is False
+    assert guide["settings_reconciled"] is True
     assert guide["counts"] == {
-        "after_waypoints": 3,
-        "expected_edges": 2,
+        "baseline_waypoints": 4,
+        "current_waypoints": 3,
+        "current_b0_waypoints": 3,
+        "ignored_extra_waypoints": 0,
+        "baseline_effective_edges": 3,
+        "desired_internal_edges": 2,
         "observed_edges": 2,
-        "connect": 1,
-        "connect_manual": 1,
-        "delete": 1,
-        "delete_resurrected": 1,
+        "observed_edges_total": 2,
+        "ignored_extra_edges": 0,
+        "connect_edges": 1,
+        "connect_manual_edges": 1,
+        "delete_edges": 1,
+        "resurrected_deleted_edges": 1,
+        "update_edges": 0,
+        "crosswalk_update_edges": 0,
+        "direction_blocked_update_edges": 0,
+        "settings_profile_edges": 0,
         "intentional_cut_edges": 1,
+        "excluded_outside_edges": 0,
     }
     action_rows = [
         (row["operation"], row["reason"], row["from"], row["to"]) for row in guide["actions"]
@@ -73,15 +73,50 @@ def test_reconciliation_guide_marks_manual_connect_and_resurrected_delete() -> N
         ("connect", "missing_manual_edge", "a", "b"),
         ("delete", "resurrected_deleted_edge", "a", "c"),
     ]
-    assert guide["intentional_cut_edges"] == [{"key": ["c", "d"], "from": "c", "to": "d"}]
+    assert guide["intentional_cuts"] == [{"from": "c", "to": "d", "manual": False}]
 
 
 def test_reconciliation_guide_accepts_raw_fallback_for_site_override() -> None:
     before = _topology(("a", "b"), (_edge("a", "b", provenance="site_override"),))
     after = _topology(("a", "b"), (_edge("a", "b", provenance="raw_fallback"),))
-    waypoints = [_waypoint("a", 0), _waypoint("b", 1)]
+    guide = build_reconciliation_guide(before, after)
 
-    guide = build_reconciliation_guide(before, after, waypoints)
-
-    assert guide["graph_reconciled"]
+    assert guide["fully_reconciled"]
+    assert guide["settings_comparison_available"] is False
     assert guide["actions"] == []
+
+
+def test_reconciliation_guide_reports_changed_public_edge_settings() -> None:
+    expected = _edge("a", "b")
+    expected["settings"] = {"disableAlternateRouteFinding": True}
+    expected["settings_fingerprint"] = "expected"
+    observed = _edge("a", "b")
+    observed["settings"] = {"disableAlternateRouteFinding": False}
+    observed["settings_fingerprint"] = "observed"
+    observed["edge_source_value"] = 1
+
+    guide = build_reconciliation_guide(
+        _topology(("a", "b"), (expected,)),
+        _topology(("a", "b"), (observed,)),
+    )
+
+    assert guide["counts"]["update_edges"] == 1
+    assert guide["actions"] == [
+        {
+            "index": 1,
+            "operation": "update",
+            "reason": "edge_settings_mismatch",
+            "from": "a",
+            "to": "b",
+            "edge_source": "EDGE_SOURCE_ODOMETRY",
+            "baseline_provenance": "raw_fallback",
+            "coordinate_scope": "orbit_live",
+            "observed_source_value": 1,
+            "desired_settings": {"disableAlternateRouteFinding": True},
+            "observed_settings": {"disableAlternateRouteFinding": False},
+            "settings_fingerprint": "expected",
+            "settings_categories": ["edge behavior"],
+            "crosswalk": False,
+            "stored_direction_matches": True,
+        }
+    ]

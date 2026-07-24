@@ -31,9 +31,11 @@ session.
    - Walk workspace: `walk-ui.js` and `walk-planner.js`;
    - native Orbit adapter: `page-bridge.js`, changed only with exact read-back tests.
 2. Add or update automated tests with the implementation.
-3. Do not hardcode the displayed extension version. Read it through
+3. Do not import or reintroduce code from `archive/offline-clone-2026-07`. Active Python support
+   remains read-only and is checked by `scripts/check_active_boundary.py`.
+4. Do not hardcode the displayed extension version. Read it through
    `OrbitSiteMapEditorExtensionContext.getVersionLabel()`.
-4. Use a descriptive development label before a live reload:
+5. Use a descriptive development label before a live reload:
 
    ```bash
    uv run python scripts/set_editor_build.py dev
@@ -45,7 +47,7 @@ session.
    uv run python scripts/set_editor_build.py release --keep-version
    ```
 
-5. Change the numeric release only at an integration or release boundary:
+6. Change the numeric release only at an integration or release boundary:
 
    ```bash
    uv run python scripts/set_editor_build.py release 0.6.0

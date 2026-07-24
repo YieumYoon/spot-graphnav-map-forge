@@ -1,27 +1,49 @@
-# Spot GraphNav Map Forge
+# Orbit Site Map Extensions
 
-Split a large Orbit **Site Map** by moving **recordings**, then restore its edited **edges** with
-the Orbit Site Map Assistant.
+Extend Orbit's native **Site Map** editor without importing, rewriting, or directly mutating
+GraphNav data outside Orbit.
 
-| Workflow | Status |
-| --- | --- |
-| [Orbit-native Site Map split](docs/workflows/orbit-native-map-split.md) | recommended; verified on Orbit 5.1.8 |
-| [Offline GraphNav/Walk clone](docs/workflows/offline-map-clone.md) | experimental |
+| Component | Purpose | Persistence boundary |
+| --- | --- | --- |
+| [Orbit Site Map Editor](extension/orbit-site-map-editor/README.md) | Search, selection, overlays, validation, reviewed editing, and Site View coverage planning | Creates native unsaved Orbit drafts; never presses **Save** |
+| [Orbit Site Map Migration Assistant](extension/orbit-graph-repair/README.md) | Restore edges and edge settings after recordings are moved between Site Maps | Compares B0 with live Orbit and creates native unsaved drafts |
+| `spot-map-forge` | Read-only backup inventory, B0 baseline creation, and optional final-backup comparison | Reads private local files and writes JSON reports only |
 
-The recommended workflow keeps recording and waypoint identity native to Orbit. The extension
-compares each result Site Map with a baseline backup, creates native unsaved edits, verifies one
-**Undo** step, and never presses **Save**.
-
-> Requalify the extension on a disposable Site Map after every Orbit upgrade.
+The extensions deliberately leave validation, Undo/Redo, persistence, and server-side lifecycle
+ownership with Orbit. This lowers data-compatibility risk compared with externally generated
+imports, but the in-page adapter can still break when Orbit changes. Requalify after every Orbit
+upgrade.
 
 This is an independent community project. It is not affiliated with or endorsed by Boston
 Dynamics.
 
-## Quick start
+## Install the Site Map Editor
 
-### 1. Create the baseline
+In the Chrome profile that opens Orbit:
 
-Before changing **Select recordings**, create a backup. This immutable backup is called **B0**.
+1. Open `chrome://extensions`.
+2. Enable **Developer mode**.
+3. Select **Load unpacked**.
+4. Choose `extension/orbit-site-map-editor`.
+5. Reload the Orbit Site Map editor.
+
+The Editor adds five workspaces:
+
+- **Explore** — live catalog search, Inspector, and overlays;
+- **Select** — exact-ID selections and graph/recording/spatial tools;
+- **Edit** — reviewed Connect, Archive, and edge-setting drafts;
+- **Validate** — topology, reachability, path, settings, and crosswalk checks;
+- **Walk** — mission-independent Site View coverage planning.
+
+It never presses Orbit **Save**.
+
+## Split a Site Map
+
+When recordings must move between Site Maps in the same Orbit instance, use the
+[Orbit-native Site Map split](docs/workflows/orbit-native-map-split.md). Orbit performs every
+recording assignment and every saved edit.
+
+Create the immutable private B0 baseline before changing **Select recordings**:
 
 ```bash
 uv sync --extra dev
@@ -33,141 +55,59 @@ uv run spot-map-forge graph-baseline /path/to/B0.tar \
   --out workspace/source-site-map/graph-baseline.json
 ```
 
-Keep B0 and `graph-baseline.json` private.
+Load `extension/orbit-graph-repair`, move recordings with Orbit, then use the baseline to review
+Connect, Archive, Site Map boundary, and edge-settings items. The extension may create a native
+draft only after review; the operator remains responsible for **Save**.
 
-### 2. Load the Orbit Site Map Assistant
-
-In the Chrome profile that opens Orbit:
-
-1. Open `chrome://extensions`.
-2. Enable **Developer mode**.
-3. Select **Load unpacked**.
-4. Choose `extension/orbit-graph-repair`.
-5. Reload the Site Map editor.
-
-### 3. Move recordings in Orbit
-
-For each exact recording ID:
-
-1. Open the **Source Site Map**.
-2. Use **Select recordings** to remove the recording.
-3. Apply the dialog, review the draft, and press **Save**.
-4. Open the **Destination Site Map**.
-5. Use **Select recordings** to add the same recording.
-6. Apply the dialog, review the draft, and press **Save**.
-7. Reopen both dialogs and verify membership.
-
-Move one recording at a time. Do not identify a recording only by its display name or row
-position.
-
-### 4. Compare and repair each Site Map
-
-Open a result Site Map and load `graph-baseline.json`.
-
-| Assistant item | Meaning | Orbit action |
-| --- | --- | --- |
-| **Connect** | an internal B0 edge is missing | **Connect in Orbit** |
-| **Archive** | an edge should remain archived | **Archive in Orbit** |
-| **Edge settings** | an existing edge differs from B0 | **Restore edge settings** |
-| **Site Map boundary** | the endpoints are in different Site Maps | review only |
-| **Ignored extra scope** | a newer waypoint was not present in B0 | review only |
-
-Recommended order:
-
-1. Show and review edges pending **Archive**.
-2. Archive the reviewed batch and press **Save**.
-3. Connect missing internal edges and press **Save**.
-4. Select **Refresh**.
-5. Restore crosswalk edge settings, review, and press **Save**.
-6. Restore the remaining edge settings, review, and press **Save**.
-7. Select **Refresh** again.
-
-The extension never presses **Save**.
-
-### 5. Verify
-
-For both Source and Destination Site Maps:
-
-- no unexplained Connect, Archive, or edge-settings items remain;
-- Site Map boundary edges match the approved split;
-- ignored extra waypoints and edges match known newer recordings;
-- recording membership matches the plan.
-
-Create a final backup when backup-level evidence is required.
-
-Use the [private operation journal template](docs/workflows/orbit-native-operation-journal-template.md)
-to record exact IDs, Undo steps, Saves, and final counts.
-
-## What the assistant restores
-
-- missing internal edges, including manually created edges;
-- B0 archived-edge state;
-- edge-scoped Spot Crosswalk callbacks;
-- mobility, stairs, direction, path following, ground, route, cost, and audio/visual edge settings.
-
-It does not restore:
-
-- an edge whose endpoints are in different Site Maps;
-- map-level Area geometry;
-- private SiteEdge or SiteWaypoint wrapper equality;
-- missions, schedules, results, anomalies, or Site View history.
-
-## Safety rules
-
-- Never modify the B0 backup.
-- Use exact Site Map, recording, waypoint, and edge endpoint IDs.
-- Wait for the Site Map to finish loading before **Refresh**.
-- Review every batch count before creating a draft.
-- Require exactly one Orbit **Undo** step per batch.
-- Treat extension **done** as “draft verified,” not “saved.”
-- Keep backups, baselines, guides, screenshots, and Walk archives out of Git.
-
-## Experimental offline clone
-
-The Python package also supports polygon selection, ID remapping, clone auditing, and `.walk.zip`
-generation. This is a separate experimental workflow:
+An optional final backup can be compared without using an intermediate reconstruction workspace:
 
 ```bash
-uv run spot-map-forge prepare /path/to/backup.tar \
-  --map '<Site-Map-name-or-ID>' \
-  --out workspace/example
-
-uv run spot-map-forge plan workspace/example \
-  --polygon examples/zone.example.json \
-  --zone-name zone-a \
-  --out workspace/example/zone-a.plan.json
-
-uv run spot-map-forge audit workspace/example \
-  --plan workspace/example/zone-a.plan.json
-
-uv run spot-map-forge build workspace/example \
-  --plan workspace/example/zone-a.plan.json \
-  --out output/zone-a
+uv run spot-map-forge reconcile-graph \
+  workspace/source-site-map/graph-baseline.json \
+  /path/to/final-backup.tar \
+  --after-map '<Result-Site-Map-name-or-ID>' \
+  --out workspace/source-site-map/final-reconciliation.json
 ```
 
-Do not treat a generated `.walk.zip` as an Orbit-supported Site Map copy. Follow the
-[experimental workflow](docs/workflows/offline-map-clone.md) and
-[compatibility matrix](docs/compatibility.md).
+## Compatibility and safety
 
-## Documentation
+- Never modify a source backup.
+- Never call private Orbit REST endpoints to write map data.
+- Never automatically press **Save**.
+- Use exact Site Map, recording, waypoint, and edge endpoint IDs.
+- Review the affected objects and require one native Undo step for each draft batch.
+- Disable mutation controls when the Orbit adapter cannot prove the expected capability.
+- Keep backups, baselines, screenshots, browser logs, and generated reports out of Git.
 
-- [Documentation index](docs/README.md)
-- [Orbit Site Map Editor](extension/orbit-site-map-editor/README.md)
-- [Orbit-native Site Map split](docs/workflows/orbit-native-map-split.md)
-- [Operation journal template](docs/workflows/orbit-native-operation-journal-template.md)
-- [Orbit Site Map Assistant](extension/orbit-graph-repair/README.md)
-- [Engineering reference](docs/orbit-map-assistant-knowledge-base.md)
-- [Python module boundaries](src/spot_graphnav_map_forge/README.md)
+See [compatibility](docs/compatibility.md), [architecture](docs/architecture.md), and
+[privacy](docs/privacy.md).
+
+## Archived offline clone research
+
+The former polygon clone, ID remapping, GraphNav bundle builder, `.walk.zip` generator, and import
+probes are no longer part of the supported or packaged product. They are preserved for historical
+research at:
+
+- branch `archive/offline-clone-2026-07`;
+- annotated tag `archive/offline-clone-2026-07`;
+- summary [docs/legacy/offline-clone.md](docs/legacy/offline-clone.md).
+
+Do not treat that archive as an Orbit-supported Site Map copy or migration path.
 
 ## Development
 
 ```bash
-uv run pytest
-uv run ruff check .
+uv run python scripts/check_active_boundary.py
+uv run python scripts/check_editor_extension.py --full --release
+uv build --offline
+uv run python scripts/check_release_hygiene.py dist/*.tar.gz dist/*.whl
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), and the
-[privacy guide](docs/privacy.md).
+Use the repo-local `$orbit-extension-dev` Skill for extension changes. Parallel code work belongs
+in separate Worktrees; the live Orbit Chrome session has one owner at a time.
+
+See [documentation](docs/README.md), [contributing](CONTRIBUTING.md), and
+[security](SECURITY.md).
 
 ## License
 

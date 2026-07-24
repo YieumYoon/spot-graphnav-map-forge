@@ -165,12 +165,12 @@ and search results; the canvas should normally use waypoint names plus A/B marke
 
 - Load the immutable B0 graph inventory and compare it with the currently open Orbit map, or import
   an optional post-move reconciliation guide.
-- Focus exact CONNECT/DELETE waypoint pairs using Orbit's own view action.
+- Focus exact Connect/Archive waypoint pairs using Orbit's own view action.
 - Show endpoint metadata and whether each pair is manual, raw fallback, resurrected deletion, or an
   intentional partition cut.
 - Mark work locally and verify that the expected edge state changed after the operator uses Orbit.
 - Compare shared edges' public GraphNav annotation profiles, including edge-scoped crosswalk
-  callbacks, and offer a confirmed native UPDATE draft when they differ.
+  callbacks, and offer a confirmed native Edge settings draft when they differ.
 - Treat a fresh post-save backup as the optional final payload/wrapper audit; live endpoint equality
   proves topology and public settings only, not private wrappers or waypoint payloads.
 
@@ -209,7 +209,7 @@ so an Orbit upgrade cannot silently downgrade a safety check.
 ## Current implementation status
 
 Version 0.8 of the unpacked Orbit Site Map Assistant implements selected-entity inspection, live B0
-graph and public edge-settings reconciliation, native CONNECT and Archive assistance, bulk Archive,
+graph and public edge-settings reconciliation, native Connect and Archive assistance, bulk Archive,
 and native public edge-settings restore. It
 follows Orbit's native waypoint/edge selection and displays exact waypoint, edge, snapshot, and
 recording IDs; recording metadata; edge provenance and cross-recording state; coordinates, degree,
@@ -217,9 +217,9 @@ neighbors, incident-edge sources, crosswalk callbacks, and public settings; plus
 counts and the 3,000-waypoint advisory.
 
 The extension accepts the complete `orbit_graph_baseline_inventory`, reads a one-shot full graph
-snapshot from the current editor and produces CONNECT, DELETE, UPDATE, and informational
-boundary-CUT lists. Exact waypoint IDs absent from B0, plus every incident edge, are reported as
-newer extra-recording scope and excluded from action generation. UPDATE compares the complete public
+snapshot from the current editor and produces Connect, Archive, Edge settings, and informational
+Site Map boundary lists. Exact waypoint IDs absent from B0, plus every incident edge, are reported as
+newer extra-recording scope and excluded from action generation. Edge settings compares the complete public
 `Edge.annotations` profile except provenance (`edgeSource`). Edge-scoped `spot-crosswalk`
 area callbacks are included. This path does not require B1, but it does not prove private SiteEdge
 wrapper or waypoint-snapshot payload equality.
@@ -231,10 +231,10 @@ through inspection, copying, and live baseline comparison. A native connection t
 that Orbit dispatches `mapEditorInfoSlice/setSelectedWaypoints`, asynchronously validates the pair,
 builds `pendingEdgeCreation.createdEdgeCandidate`, and commits it to the local editor history with
 `mapEditorFormSlice/addSiteEdge`. Version 0.5 uses that exact path, rejects warnings and unexpected
-state transitions, and never presses Save. Recording overlays, partition staging, and DELETE
+state transitions, and never presses Save. Recording overlays, partition staging, and Archive
 assistance are not yet implemented.
 
-The CONNECT button was then exercised on the live 5.1.8 editor with an exact missing pair. Orbit selected
+The Connect button was then exercised on the live 5.1.8 editor with an exact missing pair. Orbit selected
 both requested IDs, returned no validation errors or warnings, inserted the canonical endpoint key,
 and advanced its local form history from index 0 to 1. The assistant marked the pair complete only
 after those checks. Native Undo removed the draft and returned the history to index 0; Save was not
@@ -265,10 +265,10 @@ individually reversible with one native Undo.
 3. **Recording overlay** — color/filter by exact recording ID and summarize manual boundary edges.
 4. **Partition staging** — read-only recording selection with projected source/target totals and
    cut classification.
-5. **Repair verification** — CONNECT and Archive verify exact drafts in Orbit's local edit history.
-6. **Native edit assistance** — CONNECT and Archive are implemented one reviewed pair at a time;
+5. **Repair verification** — Connect and Archive verify exact drafts in Orbit's local edit history.
+6. **Native edit assistance** — Connect and Archive are implemented one reviewed pair at a time;
    never bulk-save.
 
-The implemented write boundary is deliberately narrow: native unsaved CONNECT drafts only. It
+The implemented write boundary is deliberately narrow: native unsaved Connect drafts only. It
 provides immediate operational value while retaining the versioned, fail-closed inspection contract
 required by later editing features.

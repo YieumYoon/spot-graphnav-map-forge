@@ -4,6 +4,10 @@
 - Never mutate a source backup or a source map.
 - Network/server writes must be a separate explicit command with dry-run as the default.
 - Do not commit backups, generated `.walk` archives, credentials, or private keys.
+- Treat `archive/offline-clone-2026-07` as immutable historical evidence. Do not base active
+  features on its clone, remap, bundle, Walk-generation, or import paths.
+- Active Python code is read-only support for `inspect`, `graph-baseline`, and `reconcile-graph`.
+  Run `uv run python scripts/check_active_boundary.py` after changing it.
 
 ## Orbit Site Map Editor development
 

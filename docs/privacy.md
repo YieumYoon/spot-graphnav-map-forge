@@ -1,66 +1,51 @@
 # Privacy and artifact handling
 
-Fleet-manager backups and generated map artifacts can contain sensitive operational data. Treat
-them as private even when the tool itself is open source.
+Orbit backups and live editor state can reveal sensitive operational data even when no mutation is
+performed.
 
-## Data the tool may encounter
+## Sensitive data
 
-- Site Map, recording, action, dock, and mission names;
-- stable internal IDs and source-to-clone mappings;
-- floor-plan geometry and GraphNav coordinates;
-- inspection configuration and capture targets;
-- DAQ, alignment, and other embedded images;
-- local absolute file paths;
-- timestamps and operational metadata;
-- original waypoint recording-session labels and client metadata;
-- credential or log directories elsewhere in a source backup.
+- Site Map, recording, waypoint, edge, Action, Dock, Area, and mission names;
+- stable internal IDs and graph relationships;
+- floor-plan geometry, coordinates, and traversal settings;
+- inspection configuration and images;
+- timestamps, browser logs, hostnames, and local paths.
 
-The tool intentionally avoids extracting credential directories. It cannot make the rest of a map
-non-sensitive.
+## Private local artifacts
 
-## Local artifacts
-
-| Path or file | Sensitivity |
+| Artifact | Contents |
 | --- | --- |
-| source backup `.tar` | Private source data; read-only |
-| `workspace/` | Original names, IDs, layout, source path, and action inventory |
-| `*.audit.json` | Original dependency names and IDs |
-| clone bundle | Source-to-clone mappings and cloned action images |
-| `.walk.zip` | New map topology, action definitions, and images |
-| screenshots/browser logs | May expose map layout, site names, paths, or IDs |
-| captured CLI output | May expose source session labels, counts, warnings, paths, or IDs |
+| source backup `.tar` | Private source data; always read-only |
+| `graph-baseline.json` | Exact Site Map, recording, waypoint, edge, and settings identities |
+| reconciliation report | Exact differences and affected endpoint IDs |
+| extension export or journal | Selections, findings, plans, and live object details |
+| screenshots or browser logs | Layout, names, IDs, paths, and UI state |
 
-All of these are excluded from Git by default. Exclusion is not encryption or access control.
+Keep these under ignored `workspace/`, `output/`, or another access-controlled location. Git
+exclusion is not encryption.
 
 ## Repository rules
 
 - Use only synthetic fixtures and obviously synthetic identifiers.
-- Never commit a real `.tar`, `.walk`, `.walk.zip`, image, screenshot, browser log, or generated
-  manifest.
-- Do not put real site, company, person, robot, map, action, building, or asset names in tests,
-  examples, documentation, issues, or commit messages.
-- Do not publish exact production counts, coordinates, timestamps, or UUIDs.
-- Replace local paths with placeholders such as `/path/to/backup.tar`.
-- Review `git status` and run `scripts/check_release_hygiene.py` before every public push.
+- Never commit a real backup, baseline, report, screenshot, browser log, image, credential, or
+  generated Walk artifact.
+- Do not publish exact production counts, coordinates, timestamps, IDs, names, or local paths.
+- Build the wheel and sdist, then run `scripts/check_release_hygiene.py` on those release
+  artifacts before every public release.
 
-`--recording-name` changes only the exported session label. The export summary intentionally
-reports the replaced source-label distribution for private auditability; redact that output before
-sharing logs. The tool does not create or control a fleet-manager recording UUID.
+## No telemetry, upload, or automatic Save
 
-## No telemetry or upload
+The active project has no telemetry, generated-map upload, private REST write, or automatic Save
+path. If any of those boundaries changes, document the data flow, perform a threat review, and
+obtain explicit user consent.
 
-The project contains no telemetry client and no product upload command. The local editor serves
-static assets and workspace data on loopback. If you change either boundary, document the data flow
-and obtain explicit user consent before adding any network write.
+## Archived artifacts
+
+The historical offline-clone code could create workspaces, bundles, and Walk archives. Those
+artifacts remain private even though the generator is no longer active. The archive refs contain
+source and synthetic tests only, not production artifacts.
 
 ## Reporting a bug
 
-Use a synthetic reproduction. If a bug cannot be reproduced synthetically, use the hosting
-platform's private security-reporting channel and share the smallest redacted structure possible.
-Do not attach a production artifact to a public issue.
-
-## Cleanup
-
-After verification, remove private workspaces, generated archives, screenshots, and browser logs
-according to your organization's retention policy. The tool does not delete source backups or
-automatically clean output directories.
+Use a synthetic reproduction. If that is impossible, use private security reporting and share the
+smallest redacted structure necessary.

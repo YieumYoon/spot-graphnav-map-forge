@@ -127,9 +127,8 @@ Create a final backup when formal persistence or wrapper-level evidence is requi
 Optional backup comparison:
 
 ```bash
-uv run spot-map-forge reconcile-graph workspace/source-site-map \
-  /path/to/B0.tar /path/to/final-backup.tar \
-  --before-map '<Source-Site-Map-name-or-ID>' \
+uv run spot-map-forge reconcile-graph workspace/source-site-map/graph-baseline.json \
+  /path/to/final-backup.tar \
   --after-map '<Result-Site-Map-name-or-ID>' \
   --out workspace/source-site-map/final-reconciliation.json
 ```

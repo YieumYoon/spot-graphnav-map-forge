@@ -1,64 +1,47 @@
 # Documentation
 
-The repository contains two intentionally separate workflows. Choose one before running any
-command or changing an Orbit Site Map.
+The active project is Extension-first: Orbit owns every recording assignment, editor draft,
+Undo/Redo operation, validation result, and persisted Save.
 
-## Recommended same-instance workflow
+## Orbit Site Map Editor
 
-Use this when the Source and Destination Site Maps live in the same Orbit instance and recordings can be
-moved with Orbit's native UI.
-
-1. [Orbit-native Site Map split](workflows/orbit-native-map-split.md) — operator-facing,
-   end-to-end procedure.
-2. [Operation journal template](workflows/orbit-native-operation-journal-template.md) — private
-   exact-ID move, draft, Save, and verification record.
-3. [Orbit Site Map Assistant extension](../extension/orbit-graph-repair/README.md) — installation and
+1. [Editor extension](../extension/orbit-site-map-editor/README.md) — installation and operator
    controls.
-4. [Orbit Site Map Assistant knowledge base](orbit-map-assistant-knowledge-base.md) — identity model,
-   native draft semantics, safety gates, AI-agent contract, and troubleshooting.
-5. [Orbit-native recording move research](orbit-native-recording-move.md) — detailed evidence,
-   rollback findings, and backup-level analysis.
-6. [Orbit editor extension research](orbit-editor-extension-research.md) — observed Orbit editor
-   capabilities and the extension boundary.
+2. [Feature research](orbit-site-map-editor-assistant-feature-research.md) — scoped editor backlog
+   and safety contract.
+3. [Qualification](orbit-site-map-editor-qualification.md) — anonymized evidence and the
+   post-upgrade runtime checklist.
+4. [Site View coverage planning](orbit-sitewalk-coverage-planning.md) — active-reachable waypoint
+   coverage and optional short-Sleep compatibility fallback.
 
-This workflow keeps recording and waypoint identity native to Orbit. The extension compares the
-result Site Maps with an immutable B0 backup and creates reviewable, unsaved native Orbit drafts. It
-never presses **Save**.
+## Orbit-native Site Map split
 
-## Experimental offline clone workflow
+1. [Site Map split workflow](workflows/orbit-native-map-split.md) — operator-facing procedure.
+2. [Operation journal](workflows/orbit-native-operation-journal-template.md) — private exact-ID
+   move, draft, Save, and verification record.
+3. [Migration Assistant](../extension/orbit-graph-repair/README.md) — B0 reconciliation controls.
+4. [Engineering knowledge base](orbit-map-assistant-knowledge-base.md) — topology, native draft,
+   rollback, and AI-agent boundaries.
+5. [Recording move evidence](orbit-native-recording-move.md) — controlled same-instance findings.
 
-Use this only when the same-instance native move is not suitable and a separately identified
-GraphNav/Autowalk clone is intentionally being tested.
+## Shared boundaries
 
-1. [Experimental offline map clone workflow](workflows/offline-map-clone.md) — command sequence and
-   stop conditions.
-2. [Architecture and data guarantees](architecture.md) — clone, identity, payload, and transport
-   model.
-3. [Compatibility and support levels](compatibility.md) — evidence-based support matrix.
-4. [Orbit Walk import findings](orbit-walk-import-findings.md) — controlled import evidence.
-5. [Same-instance import checklist](import-poc.md) — disposable import and runtime gates.
-
-This path remaps or reuses GraphNav/Walk identities and packages a `.walk.zip`. It is experimental
-and is not the default way to split a Site Map in the same Orbit instance.
-
-## Shared references
-
-- [Orbit Site Map Editor extension](../extension/orbit-site-map-editor/README.md) — live search,
-  detail overlay, connection candidates, and native Connect drafts.
-- [Site Map Editor feature research](orbit-site-map-editor-assistant-feature-research.md) — scoped
-  editor backlog and safety contract.
-- [Site Map Editor qualification](orbit-site-map-editor-qualification.md) — anonymized live
-  evidence and the post-upgrade runtime checklist.
-- [SiteWalk operational coverage planning](orbit-sitewalk-coverage-planning.md) — read-only Action
-  inspection, active-reachable graph coverage, and minimal Sleep compatibility fallback.
-- [Python package workflow boundaries](../src/spot_graphnav_map_forge/README.md)
-- [Privacy guide](privacy.md)
-- [Security policy](../SECURITY.md)
-- [Contributing guide](../CONTRIBUTING.md)
+- [Architecture](architecture.md)
+- [Compatibility](compatibility.md)
+- [Python read-only module boundaries](../src/spot_graphnav_map_forge/README.md)
+- [Privacy](privacy.md)
+- [Security](../SECURITY.md)
+- [Contributing](../CONTRIBUTING.md)
 - [Changelog](../CHANGELOG.md)
+
+## Archived research
+
+The offline GraphNav/Walk clone implementation is not shipped or supported on the default branch.
+Its purpose, findings, and immutable Git references are recorded in
+[legacy/offline-clone.md](legacy/offline-clone.md).
 
 ## Private artifacts
 
-Backups, baselines, reconciliation guides, workspaces, Walk archives, screenshots, browser logs,
-and exact site identifiers are private operational artifacts. Keep them under ignored
-`workspace/`, `output/`, or another private location. Do not commit or attach them to public issues.
+Backups, baselines, reconciliation reports, screenshots, browser logs, and exact site identifiers
+are private operational artifacts. Keep them under ignored `workspace/`, `output/`, or another
+private location. Do not commit or attach them to public issues.

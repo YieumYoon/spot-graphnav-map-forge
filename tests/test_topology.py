@@ -221,6 +221,69 @@ def test_graph_baseline_cli_preserves_effective_edges_and_tombstones(tmp_path) -
     assert "operator deletion" in baseline["limitations"]["tombstone_origin"]
 
 
+def test_reconcile_graph_cli_reads_baseline_and_final_backup_without_workspace(
+    tmp_path,
+) -> None:
+    before_path = tmp_path / "before.tar"
+    after_path = tmp_path / "after.tar"
+    baseline_path = tmp_path / "private" / "graph-baseline.json"
+    report_path = tmp_path / "private" / "final-reconciliation.json"
+    _backup(
+        before_path,
+        active_site_edges=(("wp-2", "wp-4", 7),),
+        tombstones=(("wp-2", "wp-3", 1),),
+    )
+    _backup(
+        after_path,
+        active_site_edges=(),
+        tombstones=(("wp-2", "wp-3", 1),),
+    )
+
+    assert (
+        main(
+            [
+                "graph-baseline",
+                str(before_path),
+                "--map",
+                "Test Map",
+                "--out",
+                str(baseline_path),
+            ]
+        )
+        == 0
+    )
+    assert (
+        main(
+            [
+                "reconcile-graph",
+                str(baseline_path),
+                str(after_path),
+                "--after-map",
+                "Test Map",
+                "--out",
+                str(report_path),
+            ]
+        )
+        == 0
+    )
+
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["kind"] == "orbit_graph_reconciliation_guide"
+    assert report["comparison_source"] == "final_backup_vs_b0_baseline"
+    assert report["fully_reconciled"] is False
+    assert report["counts"]["connect_edges"] == 1
+    assert report["actions"][0] == {
+        "index": 1,
+        "operation": "connect",
+        "reason": "missing_manual_edge",
+        "from": "wp-2",
+        "to": "wp-4",
+        "edge_source": "7",
+        "baseline_provenance": "site_only",
+        "coordinate_scope": "orbit_live",
+    }
+
+
 def test_edge_settings_preserve_crosswalk_and_public_annotation_values() -> None:
     edge = _edge("wp-1", "wp-2")
     edge.annotations.disable_alternate_route_finding = True

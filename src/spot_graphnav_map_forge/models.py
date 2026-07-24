@@ -1,15 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
 class MapLayoutControlPoint:
-    """A waypoint placement used to draw a Site Map over a floor plan.
-
-    This is not Orbit's Site View panorama feature. The proprietary backup stores this
-    floor-plan/layout message alongside a Site Map record.
-    """
+    """A waypoint placement used to draw a Site Map over a floor plan."""
 
     waypoint_id: str
     position: tuple[float, float, float]
@@ -48,8 +44,6 @@ class ActionRecord:
 
 @dataclass(frozen=True)
 class DockRecord:
-    """One deduplicated SiteDock backed by a public Autowalk Target."""
-
     id: str
     dock_id: int
     docked_waypoint_id: str
@@ -61,35 +55,7 @@ class DockRecord:
 
 @dataclass(frozen=True)
 class PanoStateRecord:
-    """Waypoint-keyed state for Orbit's 360-degree Site View capture feature."""
-
     waypoint_id: str
     updated_seconds: int | None
     updated_nanos: int | None
     source_path: str
-
-
-@dataclass(frozen=True)
-class WalkTargetOpaqueProfile:
-    """Unambiguous opaque Target fields recovered from records in one backup."""
-
-    selection: str
-    source_path: str
-    source_updated: int | None
-    observed_source_records: int
-    travel_params_fields: bytes
-    travel_params_field_numbers: tuple[int, ...]
-    target_fields: bytes
-    target_field_numbers: tuple[int, ...]
-
-
-@dataclass
-class ValidationReport:
-    valid: bool = True
-    errors: list[str] = field(default_factory=list)
-    warnings: list[str] = field(default_factory=list)
-    counts: dict[str, int] = field(default_factory=dict)
-
-    def error(self, message: str) -> None:
-        self.valid = False
-        self.errors.append(message)

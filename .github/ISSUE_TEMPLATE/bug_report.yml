@@ -12,8 +12,8 @@ body:
   - type: input
     id: version
     attributes:
-      label: Map Forge version
-      placeholder: 0.1.0a1
+      label: Project or extension version
+      placeholder: 0.2.0a1 or 0.5.0
     validations:
       required: true
   - type: dropdown
@@ -21,14 +21,13 @@ body:
     attributes:
       label: Pipeline stage
       options:
+        - Orbit Site Map Editor
+        - Orbit Site Map Migration Assistant
         - inspect
-        - prepare
-        - plan
-        - clone
-        - validate
-        - export-walk
-        - planner UI
-        - packaging or installation
+        - graph-baseline
+        - reconcile-graph
+        - extension installation or reload
+        - packaging
     validations:
       required: true
   - type: textarea

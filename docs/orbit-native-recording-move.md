@@ -48,7 +48,7 @@ only in ignored `output/analysis/` evidence. They must not be committed or publi
 | Waypoint | exact case-sensitive GraphNav waypoint ID | edge endpoint and invariant |
 | Waypoint snapshot | exact snapshot ID referenced by the waypoint | recording-data invariant |
 | Edge | canonical unordered endpoint pair, with stored direction retained as payload evidence | topology diff key |
-| SiteEdge edit | map ID plus endpoint pair and wrapper state | add/delete/update reconciliation |
+| SiteEdge edit | map ID plus endpoint pair and wrapper state | Connect/Archive/edge-settings reconciliation |
 | Action, Dock, panorama state | exact record ID and referenced waypoint IDs | dependency/blocker report |
 
 Names, coordinates, and nearest-neighbor geometry are evidence only. An agent must never use them
@@ -65,7 +65,7 @@ Use these conceptual artifacts for every run:
 | `partition-plan.json` | source/target map allowlist and exact recording IDs chosen by the operator | reviewed, then frozen |
 | `move-journal.json` | expected state, every UI action, observed state, and rollback state | append/update after each transition |
 | `B1` | optional backup after assignment for payload/wrapper audit | immutable evidence |
-| `edge-plan.json` | desired-versus-observed add/delete/update operations for both maps | reviewed, then frozen |
+| `edge-plan.json` | desired-versus-observed Connect/Archive/edge-settings operations for both maps | reviewed, then frozen |
 | `B2` | final backup after reconciliation | immutable evidence |
 
 Backups, journals, catalogs, generated Walks, and evidence screenshots are private and ignored by
@@ -195,17 +195,18 @@ Recordings do not encode the final edited Site Map. Build desired graphs from `B
 them with `B1` independently for source and target:
 
 ```text
-ADD    = desired endpoint pairs - observed endpoint pairs
-DELETE = observed endpoint pairs - desired endpoint pairs
-UPDATE = shared endpoint pairs whose public annotations or map-owned settings differ
+CONNECT       = desired endpoint pairs - observed endpoint pairs
+ARCHIVE       = observed endpoint pairs - desired endpoint pairs
+EDGE SETTINGS = shared endpoint pairs whose public annotations or map-owned settings differ
 ```
 
-`ADD` includes every genuinely missing B0 connection whose endpoints belong together in the final
-partition, not only manually created edges. Before emitting `ADD`, check for an identical raw edge:
+`CONNECT` includes every genuinely missing B0 connection whose endpoints belong together in the
+final partition, not only manually created edges. Before emitting `CONNECT`, check for an identical raw edge:
 the pilot's odometry, localization, and small-loop-closure connections remained visible after their
-SiteEdge wrappers disappeared. Those cases are `UPDATE`, because Orbit fell back to the raw edge.
-`DELETE` is equally important: attaching a recording may expose an original edge that the operator
-deleted in the edited source. `UPDATE` includes public edge annotations, Areas/callbacks, and
+SiteEdge wrappers disappeared. Those cases are **Edge settings**, because Orbit fell back to the raw
+edge. `ARCHIVE` is equally important: attaching a recording may expose an original edge that the
+operator deleted in the edited source. **Edge settings** includes public edge annotations,
+Areas/callbacks, and
 observed private field-3 environment/travel state that the native assignment did not carry.
 
 Apply operations only when both exact endpoint IDs exist in that map. Preserve the stored direction
@@ -229,24 +230,21 @@ uv run spot-map-forge graph-baseline /path/to/B0.tar \
 ```
 
 This inventory contains the complete effective graph, including raw fallbacks, active SiteEdge
-overrides, SiteEdge-only connections, edge-source classification, and every deletion tombstone.
+overrides, SiteEdge-only connections, edge-source classification, and every Archive tombstone.
 The backup does not identify whether a tombstone came from a human deletion or Orbit
-normalization, so all tombstones are preserved by exact endpoint IDs. The workspace-oriented
-`edge-inventory` is useful for waypoint matching but is not a replacement for this complete B0
-inventory.
+normalization, so all tombstones are preserved by exact endpoint IDs.
 
 After the recording move, open the resulting source or target Site Map in Orbit, load
 `graph-baseline.json` in the extension, and run **Refresh**. No B1 file is required for this live
 graph-only comparison. The extension reads the current waypoint and edge state through its narrow
 read-only Orbit 5.1 adapter and constructs the guide in memory.
 
-If a fresh B1 backup is available for audit purposes, the existing offline command can still create
+If a fresh B1 backup is available for audit purposes, the read-only comparison command can create
 an equivalent prebuilt guide:
 
 ```bash
-uv run spot-map-forge reconcile-graph workspace/original-map \
-  /path/to/B0.tar /path/to/B1.tar \
-  --before-map '<original-map-name-or-id>' \
+uv run spot-map-forge reconcile-graph workspace/original-map/graph-baseline.json \
+  /path/to/B1.tar \
   --after-map '<source-or-target-map-name-or-id>' \
   --out workspace/original-map/map-reconciliation.json
 ```
@@ -254,8 +252,7 @@ uv run spot-map-forge reconcile-graph workspace/original-map \
 Load [`extension/orbit-graph-repair`](../extension/orbit-graph-repair/README.md) as an unpacked
 extension in the same `chrome-tablet-proxy` profile used to access Orbit. Use **Load B0 baseline**
 for the live path, or open the exact `--after-map` and use **Import prebuilt guide** for the optional
-B1 path. The standalone `serve --reconciliation` screen is only an offline diagnostic fallback;
-the operator workflow stays in Orbit.
+B1 path. The operator workflow stays in Orbit.
 
 The baseline must come from the original `B0` Site Map. Run the live comparison once for each
 post-move source or target map. For the current Orbit waypoint set, the extension constructs the
@@ -265,30 +262,31 @@ desired induced subgraph from the effective `B0` topology:
 effective topology = (raw recording edges union active SiteEdges) minus SiteEdge tombstones
 desired topology   = effective B0 edges whose two endpoints exist in the current Orbit map
 CONNECT            = desired topology minus live Orbit topology
-DELETE             = live Orbit topology minus desired topology
+ARCHIVE            = live Orbit topology minus desired topology
 ```
 
 The extension focuses one exact waypoint pair at a time with Orbit's own two-waypoint fit action.
-`CONNECT` pairs use a dashed turquoise line and `DELETE` pairs use a solid red line over Orbit's
+`CONNECT` pairs use a dashed turquoise line and `ARCHIVE` pairs use a solid red line over Orbit's
 canvas; A/B markers use the current Orbit anchor positions rather than the backup projection. The
 two endpoint IDs, names, and recording-session labels remain visible beside the Orbit map. A
-`DELETE` pair is labeled `resurrected_deleted_edge` when the same endpoints have a `B0` SiteEdge
-tombstone. All edges with only one endpoint in the selected map are counted as intentional
+legacy guide stores Archive internally as `delete`; a pair is labeled
+`resurrected_deleted_edge` when the same endpoints have a `B0` SiteEdge tombstone. All edges with
+only one endpoint in the selected map are counted as intentional
 partition cuts and never become an action.
 
 Version 0.8 additionally compares public `Edge.annotations` on every shared edge. This includes
 edge-scoped `spot-crosswalk` callbacks, mobility parameters and override mask, stairs, direction,
 path-following, ground, alternate-route and directed-exploration behavior, cost, and audio/visual
-settings. A confirmed UPDATE uses Orbit's native `updateSiteEdges` draft, preserves the live
+settings. A confirmed **Edge settings** item uses Orbit's native `updateSiteEdges` draft, preserves the live
 identity/transform/snapshot/source/wrapper, verifies exact read-back, and creates one Undo step.
 Stored direction, source, current settings, endpoints, and map ID are stale-state guards; any
 mismatch stops the complete batch. Private wrapper fields and SiteWaypoint payloads remain outside
-this restore. The extension treats a raw edge as a valid connection but emits UPDATE if its public
+this restore. The extension treats a raw edge as a valid connection but emits **Edge settings** if its public
 profile differs from B0.
 
 If a result map legitimately contains recordings added after B0, their waypoint IDs are absent from
 the baseline by definition. The extension counts those exact IDs and every incident edge as
-`ignored extra scope`; it does not emit CONNECT, DELETE, or UPDATE actions for them. Only edges whose
+`ignored extra scope`; it does not emit Connect, Archive, or Edge settings actions for them. Only edges whose
 two endpoints are both in B0 participate in restoration.
 
 The in-page focus adapter is intentionally narrow and version-sensitive. It reads the loaded
@@ -320,7 +318,7 @@ Stop immediately when any of these occurs:
 - an unexpected recording is selected or becomes unassigned;
 - Orbit reports an error, the page reloads unexpectedly, or a Save remains pending;
 - waypoint/snapshot identity changes or a referenced snapshot is missing;
-- observed edge state cannot be represented by the planned add/delete/update operation;
+- observed edge state cannot be represented by the planned Connect/Archive/edge-settings operation;
 - storage pressure prevents creation of the required verification backup.
 
 Recording reassignment is only a **membership rollback**: remove the exact recording ID from target,
@@ -393,7 +391,7 @@ SiteEdge override wrappers described above. The pilot therefore proves identity 
 connection retention, but disproves lossless restoration of map-owned edits.
 
 The analyzer now models raw-edge fallback, SiteEdge overrides, tombstones, and public annotation
-profiles. A manual CONNECT draft and an odometry Archive tombstone were created and undone through
+profiles. A manual Connect draft and an odometry Archive tombstone were created and undone through
 Orbit 5.1.8's native editor path with exact endpoint and history verification.
 
 The settings adapter subsequently completed a production-scale staged restore on a result map:
@@ -404,7 +402,7 @@ The settings adapter subsequently completed a production-scale staged restore on
   the operator reviewed and saved it;
 - no stored-direction block occurred, and the extension reported zero pending settings after the
   second draft;
-- 8 CONNECT items and 6 intentional boundary cuts remained visibly separate from settings work.
+- 8 Connect items and 6 Site Map boundary items remained visibly separate from settings work.
 
 This closes the live public-settings draft gate for that version and scale. SiteWaypoint edit
 migration, private wrapper reconstruction, cross-version compatibility, and a final backup proof

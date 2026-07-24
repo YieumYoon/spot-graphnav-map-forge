@@ -85,6 +85,7 @@ def parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     manifest = validate_manifest(release=args.release)
+    run([sys.executable, str(ROOT / "scripts" / "check_active_boundary.py")])
 
     node = shutil.which("node")
     ruff = shutil.which("ruff")

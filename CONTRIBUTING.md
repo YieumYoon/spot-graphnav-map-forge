@@ -1,52 +1,51 @@
 # Contributing
 
-Thank you for helping improve Spot GraphNav Map Forge. The project prioritizes deterministic
-offline behavior, fail-closed compatibility, and strict handling of operational data.
+Thank you for improving the Orbit Site Map extensions and their read-only support tools.
 
 ## Before opening an issue
 
 - Read the [compatibility matrix](docs/compatibility.md).
-- Run the failing command again with a synthetic fixture when possible.
-- Remove site names, local paths, UUIDs, coordinates, counts, timestamps, screenshots, and images.
-- Never attach a real backup, Walk, workspace, audit report, clone manifest, or generated archive.
+- Reproduce the problem with synthetic data whenever possible.
+- Remove site names, paths, IDs, coordinates, counts, timestamps, screenshots, logs, and images.
+- Never attach a real backup, baseline, reconciliation report, or browser capture.
 
-Use private security reporting for vulnerabilities or bugs that cannot be described safely in a
-public issue. See [SECURITY.md](SECURITY.md).
+Use private security reporting when a problem cannot be described safely in public.
 
 ## Development setup
 
 ```bash
 uv sync --extra dev
-uv run pytest
-uv run ruff check .
-uv run ruff format --check .
-uv run python scripts/check_release_hygiene.py
+uv run python scripts/check_active_boundary.py
+uv run python scripts/check_editor_extension.py --full --release
+uv build --offline
+uv run python scripts/check_release_hygiene.py dist/*.tar.gz dist/*.whl
 ```
+
+Use the repo-local `$orbit-extension-dev` Skill for extension changes.
 
 ## Pull requests
 
-1. Keep source backups read-only.
-2. Keep upload and other network writes outside the CLI.
-3. Add or update synthetic tests for every behavior change.
-4. Preserve unknown wire fields unless a documented compatibility rule requires otherwise.
-5. Fail closed when a dependency cannot be represented faithfully.
-6. Update the support matrix and changelog when evidence levels change.
-7. Run the complete verification suite before requesting review.
+1. Keep source backups immutable.
+2. Keep Orbit Save, uploads, private REST writes, and other product persistence outside the code.
+3. Add synthetic tests for every behavior change.
+4. Fail closed when identity, current state, native validation, read-back, or Undo cannot be proven.
+5. Update compatibility evidence and the changelog when a boundary changes.
+6. Keep active Python imports inside the allowlisted read-only package boundary.
+7. Do not modify the archived offline-clone branch or tag.
+
+## Live Orbit tests
+
+Static checks run first. The live Chrome session has one owner at a time, and live checks are
+read-only by default. A disposable native draft requires explicit scope, exact read-back, one Undo
+step, and restoration before handoff. Never press Orbit **Save** during qualification.
 
 ## Synthetic data only
 
-Fixtures must use generic names such as `Example Map`, `zone-a`, and `source-waypoint`. UUID-shaped
-values must be obviously synthetic and must not be copied from a real deployment. Do not include:
-
-- company, facility, building, asset, robot, person, or map names;
-- production action names or inspection questions;
-- exact production counts, coordinates, timestamps, or IDs;
-- customer screenshots or images;
-- credentials, hostnames, IP addresses, tokens, or local user paths;
-- generated `.tar`, `.walk`, or `.walk.zip` files.
+Do not include company, facility, person, robot, production map, recording, Action, or asset names;
+real UUIDs or exact counts; customer screenshots; credentials; hostnames; private IP addresses; or
+local absolute paths.
 
 ## Licensing
 
-By submitting a contribution, you agree that it may be distributed under the Apache License 2.0.
-Do not copy Boston Dynamics SDK example code or third-party source into this repository unless its
-license and attribution requirements have been reviewed and documented.
+Contributions are distributed under Apache License 2.0. Do not copy third-party or vendor example
+code without reviewing and documenting its license.
