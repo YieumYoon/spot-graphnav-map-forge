@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import stat
 import sys
 import tarfile
 import zipfile
@@ -180,6 +181,17 @@ def scan_zip(path: Path) -> list[Finding]:
                 continue
             member_name = member.filename
             location = _archive_location(path.name, member_name)
+            if stat.S_ISLNK(member.external_attr >> 16):
+                with archive.open(member) as stream:
+                    target = stream.read(MAX_TEXT_BYTES + 1)
+                try:
+                    target_path = PurePosixPath(target.decode("utf-8"))
+                except UnicodeDecodeError:
+                    findings.append(Finding(location, "could not inspect symlink target"))
+                else:
+                    if target_path.is_absolute():
+                        findings.append(Finding(location, "absolute symlink target"))
+                continue
             reason = _path_reason(PurePosixPath(member_name).parts)
             if reason is not None:
                 findings.append(Finding(location, reason))
@@ -197,6 +209,15 @@ def scan_tar(path: Path) -> list[Finding]:
     findings: list[Finding] = []
     with tarfile.open(path, "r:*") as archive:
         for member in archive.getmembers():
+            if member.issym() or member.islnk():
+                if PurePosixPath(member.linkname).is_absolute():
+                    findings.append(
+                        Finding(
+                            _archive_location(path.name, member.name),
+                            "absolute symlink target",
+                        )
+                    )
+                continue
             if not member.isfile():
                 continue
             member_name = member.name
@@ -218,6 +239,8 @@ def scan_tar(path: Path) -> list[Finding]:
 
 
 def scan_path(path: Path) -> list[Finding]:
+    if path.is_symlink():
+        return list(_scan_file(path, path.name))
     if path.is_dir():
         return scan_tree(path)
     if zipfile.is_zipfile(path):
@@ -245,7 +268,7 @@ def main(argv: list[str] | None = None) -> int:
     findings: list[Finding] = []
     missing: list[Path] = []
     for path in args.paths:
-        if not path.exists():
+        if not path.exists() and not path.is_symlink():
             missing.append(path)
             continue
         findings.extend(scan_path(path))
