@@ -8,7 +8,8 @@ editable in reviewed batches, and verifiable before the operator presses **Save*
 
 ## Product decisions
 
-- All listed editor capabilities remain in scope unless explicitly rejected.
+- This document preserves the research backlog, not a promise that every listed capability ships.
+  The extension README and qualification record define the current product surface.
 - AI and natural-language automation are out of scope for now.
 - Human-operable backup, rollback-plan, checkpoint, and post-Save workflow automation are out of
   scope.
@@ -152,7 +153,6 @@ Every finding should support **Focus**, **Add to selection**, **Copy IDs**, and 
 | Path inspector | Compare edge settings and direction along an ordered route |
 | Reachability test | Check routes from docks or selected start waypoints to Actions and Areas |
 | Before/after preview | Show topology, settings, component, and reachability deltas before drafting |
-| Edit-plan import/export | Reapply a reviewed exact-ID plan without requiring a migration baseline |
 | Crosswalk audit | Find callback Areas, assigned edges, missing approaches, and inconsistent profiles |
 | Recording overlay | Color by exact recording ID and expose cross-recording edges |
 | Settings matrix | Display mixed values across a selection and edit only chosen fields |
@@ -207,9 +207,10 @@ Existing directory: `extension/orbit-graph-repair`
 - Site Map boundary review;
 - migration operation journal.
 
-The extensions may share tested, build-time source modules, but each must have its own manifest,
-storage namespace, UI, release version, and compatibility qualification. Installing one extension
-must not require or modify the other.
+The extensions intentionally remain separate load-unpacked, no-build packages. They do not share
+JavaScript modules; matching adapter contracts are duplicated locally and compared by
+cross-extension behavior tests. Each has its own manifest, storage namespace, UI, release version,
+and compatibility qualification. Installing one extension must not require or modify the other.
 
 ## Connect mode
 

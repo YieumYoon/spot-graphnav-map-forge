@@ -91,7 +91,12 @@ synthesize private SiteEdge/SiteWaypoint wrapper fields.
 - All write assistance uses Orbit's native editor actions and creates unsaved drafts.
 - A mismatch in Site Map ID, endpoint, edge source, direction, settings, selection, or edit history
   fails closed.
-- Each accepted batch must create exactly one **Undo** step.
+- Each accepted batch must increase the draft index and create exactly one **Undo** step. The
+  draft-index delta itself may be greater than one.
+- If dispatch may have succeeded but the response or read-back is incomplete, the assistant shows
+  an **unverified native draft** warning and locks later mutations. Do not Save. Inspect the exact
+  target and Orbit history, and use Undo only when the change is visibly the newest Undo step.
+  Clear the lock only after inspection, recovery, or reloading Orbit from the persisted state.
 - B0 and imported guides remain in this Chrome profile until removed.
 - Internal guide values remain `connect`, `delete`, and `update` for file compatibility; the UI uses
   Orbit terms **Connect**, **Archive**, and **Edge settings**.

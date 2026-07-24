@@ -2,7 +2,11 @@
   "use strict";
 
   const CHANNEL = "orbit-graph-repair-v1";
+  const REQUEST_TYPE = "orbit-graph-repair-request";
   const RESPONSE_TYPE = "orbit-graph-repair-response";
+  const READY_TYPE = "orbit-graph-repair-ready";
+  const REGISTRY_KEY = "__orbitGraphRepairBridgeV2";
+  const SESSION_ID = String(document.currentScript?.dataset?.ogrSession || "");
   const FOCUS_ACTION_TYPE = "mapDisplay/updateNeedsZoomToWaypoints";
   const ACTIVATE_TOOL_ACTION_TYPE = "mapEditorInfoSlice/activateTool";
   const SELECT_WAYPOINTS_ACTION_TYPE = "mapEditorInfoSlice/setSelectedWaypoints";
@@ -44,14 +48,25 @@
 
   let catalogCache = null;
 
-  if (globalThis.__orbitGraphRepairBridgeV1) {
+  const previousBridge = globalThis[REGISTRY_KEY];
+  if (previousBridge?.dispose) previousBridge.dispose();
+  if (globalThis.__orbitGraphRepairBridgeV1 === true && !previousBridge) {
     window.postMessage(
-      { channel: CHANNEL, type: "orbit-graph-repair-ready" },
+      { channel: CHANNEL, type: READY_TYPE, sessionId: SESSION_ID, legacy: true },
       location.origin,
     );
     return;
   }
-  globalThis.__orbitGraphRepairBridgeV1 = true;
+  const handledRequestIds = new Set();
+  let mutationInFlight = false;
+  let disposed = false;
+
+  function isCurrentBridge() {
+    return Boolean(
+      !disposed &&
+      globalThis[REGISTRY_KEY]?.sessionId === SESSION_ID,
+    );
+  }
 
   function currentMapId() {
     const match = location.pathname.match(/\/control_room\/maps\/([^/]+)\/edit/);
@@ -229,6 +244,17 @@
     return result;
   }
 
+  function unmodeledAnnotations(annotations) {
+    const result = {};
+    for (const key of Object.keys(annotations || {}).sort()) {
+      if (key === "edgeSource" || EDGE_SETTING_FIELD_SET.has(key)) continue;
+      const value = annotations[key];
+      if (value === undefined) continue;
+      result[key] = normalizeJsonValue(value, `edge_annotation_${key}`);
+    }
+    return result;
+  }
+
   function requestedEdgeSettings(value) {
     const result = {};
     for (const key of Object.keys(value).sort()) {
@@ -287,16 +313,105 @@
     return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
   }
 
+  function historyState(form) {
+    return {
+      editIndex: Number.isInteger(form?.present?.index)
+        ? form.present.index
+        : null,
+      undoDepth: Array.isArray(form?.past) ? form.past.length : null,
+    };
+  }
+
+  function oneUndoDraftCreated(before, after) {
+    const hasEditIndex =
+      Number.isInteger(before.editIndex) &&
+      Number.isInteger(after.editIndex);
+    const hasUndoDepth =
+      Number.isInteger(before.undoDepth) &&
+      Number.isInteger(after.undoDepth);
+    if (!hasEditIndex || !hasUndoDepth) return false;
+    return (
+      after.editIndex > before.editIndex &&
+      after.undoDepth === before.undoDepth + 1
+    );
+  }
+
+  function sameHistoryState(before, after) {
+    return Boolean(
+      Number.isInteger(before?.editIndex) &&
+      Number.isInteger(after?.editIndex) &&
+      Number.isInteger(before?.undoDepth) &&
+      Number.isInteger(after?.undoDepth) &&
+      before.editIndex === after.editIndex &&
+      before.undoDepth === after.undoDepth
+    );
+  }
+
+  function safeHistoryState(store) {
+    try {
+      return historyState(store.getState()?.mapEditor?.form);
+    } catch {
+      return { editIndex: null, undoDepth: null };
+    }
+  }
+
+  function mutationFailure(
+    error,
+    before,
+    after,
+    {
+      dispatchAttempted = true,
+      writeObserved = false,
+      targetKeys = [],
+    } = {},
+  ) {
+    const historyChanged = Boolean(
+      (
+        Number.isInteger(before?.editIndex) &&
+        Number.isInteger(after?.editIndex) &&
+        after.editIndex !== before.editIndex
+      ) ||
+      (
+        Number.isInteger(before?.undoDepth) &&
+        Number.isInteger(after?.undoDepth) &&
+        after.undoDepth !== before.undoDepth
+      )
+    );
+    return {
+      error,
+      // A Redux reducer can update the draft and then throw. Every caller
+      // reaches this helper only after attempting a native mutation dispatch,
+      // so failed read-back must remain explicitly ambiguous.
+      mutationMayExist: true,
+      dispatchAttempted: Boolean(dispatchAttempted),
+      writeObserved: Boolean(writeObserved),
+      historyChanged,
+      beforeEditIndex: before?.editIndex ?? null,
+      afterEditIndex: after?.editIndex ?? null,
+      beforeUndoDepth: before?.undoDepth ?? null,
+      afterUndoDepth: after?.undoDepth ?? null,
+      targetKeys,
+    };
+  }
+
   async function validatedEdgeCandidate(store, mapId, waypointIds) {
+    if (!isCurrentBridge()) return { error: "bridge_disposed" };
     const initialState = store.getState();
     const previous = initialState?.mapEditor?.info?.pendingEdgeCreation
       ?.createdEdgeCandidate;
     const previousMatches = sameWaypointPair(previous?.edge?.id, waypointIds);
+    if (previousMatches) {
+      store.dispatch({ type: SELECT_WAYPOINTS_ACTION_TYPE, payload: [] });
+      await wait(0);
+      if (!isCurrentBridge()) return { error: "bridge_disposed" };
+    }
+    if (!isCurrentBridge()) return { error: "bridge_disposed" };
     store.dispatch({ type: SELECT_WAYPOINTS_ACTION_TYPE, payload: waypointIds });
 
     const deadline = Date.now() + EDGE_VALIDATION_TIMEOUT_MS;
     let sawValidation = false;
     while (Date.now() < deadline) {
+      if (!isCurrentBridge()) return { error: "bridge_disposed" };
       const state = store.getState();
       if (
         state?.mapDisplay?.siteMapId !== mapId ||
@@ -315,8 +430,9 @@
         sameWaypointPair(candidate?.edge?.id, waypointIds) &&
         candidate?.siteMapId === mapId &&
         !pending.validating &&
-        (candidate !== previous || sawValidation || previousMatches);
+        (candidate !== previous || sawValidation);
       if (candidateReady) {
+        if (!isCurrentBridge()) return { error: "bridge_disposed" };
         if ((pending.errors || []).length) {
           return { error: "edge_validation_failed" };
         }
@@ -326,44 +442,122 @@
         return { candidate };
       }
       await wait(50);
+      if (!isCurrentBridge()) return { error: "bridge_disposed" };
     }
     return { error: "edge_validation_timeout" };
   }
 
-  async function connectWaypointPair(store, mapId, waypointIds) {
-    const initialState = store.getState();
-    const map = initialState?.siteMaps?.entities?.[mapId];
+  function pairPrecondition(state, mapId, waypointIds) {
+    const map = state?.siteMaps?.entities?.[mapId];
     const mapWaypointIds = new Set(map?.waypointIds || []);
     if (!waypointIds.every((id) => mapWaypointIds.has(id))) {
-      return { error: "map_or_waypoint_mismatch" };
+      return "map_or_waypoint_mismatch";
     }
-    if (effectiveEdgeEntity(initialState, waypointIds)) {
-      return { error: "edge_already_exists" };
-    }
+    if (effectiveEdgeEntity(state, waypointIds)) return "edge_already_exists";
+    return "";
+  }
 
-    const validation = await validatedEdgeCandidate(store, mapId, waypointIds);
+  async function connectWaypointPair(store, mapId, waypointIds) {
+    const initialState = store.getState();
+    const precondition = pairPrecondition(initialState, mapId, waypointIds);
+    if (precondition) return { error: precondition };
+    const validationBeforeHistory = historyState(initialState?.mapEditor?.form);
+    let validation;
+    let validatedState;
+    try {
+      validation = await validatedEdgeCandidate(store, mapId, waypointIds);
+      validatedState = store.getState();
+    } catch {
+      const validationAfterHistory = safeHistoryState(store);
+      return {
+        error: "native_validation_exception",
+        mutationMayExist: !sameHistoryState(
+          validationBeforeHistory,
+          validationAfterHistory,
+        ),
+        beforeEditIndex: validationBeforeHistory.editIndex,
+        afterEditIndex: validationAfterHistory.editIndex,
+        beforeUndoDepth: validationBeforeHistory.undoDepth,
+        afterUndoDepth: validationAfterHistory.undoDepth,
+        targetKeys: [edgeKey(waypointIds[0], waypointIds[1])],
+      };
+    }
+    if (!isCurrentBridge()) return { error: "bridge_disposed" };
+    const validationAfterHistory = historyState(validatedState?.mapEditor?.form);
+    if (!sameHistoryState(validationBeforeHistory, validationAfterHistory)) {
+      return {
+        valid: false,
+        error: "validation_changed_draft",
+        mutationMayExist: true,
+        beforeEditIndex: validationBeforeHistory.editIndex,
+        afterEditIndex: validationAfterHistory.editIndex,
+        beforeUndoDepth: validationBeforeHistory.undoDepth,
+        afterUndoDepth: validationAfterHistory.undoDepth,
+        targetKeys: [edgeKey(waypointIds[0], waypointIds[1])],
+      };
+    }
     if (!validation.candidate) return validation;
-    const beforeIndex = store.getState()?.mapEditor?.form?.present?.index;
-    store.dispatch({
-      type: ADD_SITE_EDGE_ACTION_TYPE,
-      payload: validation.candidate,
-    });
-    const finalState = store.getState();
-    const added = editedEdgeEntity(finalState, waypointIds);
-    const afterIndex = finalState?.mapEditor?.form?.present?.index;
+    const refreshedPrecondition = pairPrecondition(
+      validatedState,
+      mapId,
+      waypointIds,
+    );
+    if (refreshedPrecondition) return { error: refreshedPrecondition };
+    const beforeHistory = validationAfterHistory;
+    const targetKeys = [edgeKey(waypointIds[0], waypointIds[1])];
+    if (!isCurrentBridge()) return { error: "bridge_disposed" };
+    let finalState;
+    let added;
+    let afterHistory;
+    try {
+      store.dispatch({
+        type: ADD_SITE_EDGE_ACTION_TYPE,
+        payload: validation.candidate,
+      });
+      finalState = store.getState();
+      added = editedEdgeOverride(finalState, waypointIds);
+      afterHistory = historyState(finalState?.mapEditor?.form);
+    } catch {
+      return mutationFailure(
+        "native_mutation_exception",
+        beforeHistory,
+        safeHistoryState(store),
+        {
+          dispatchAttempted: true,
+          targetKeys,
+        },
+      );
+    }
     if (
       !added ||
       added.archived ||
       added.disabled ||
+      added.siteMapId !== mapId ||
       !sameWaypointPair(added.edge?.id, waypointIds) ||
-      (Number.isInteger(beforeIndex) && afterIndex !== beforeIndex + 1)
+      finalState?.mapDisplay?.siteMapId !== mapId ||
+      currentMapId() !== mapId ||
+      !oneUndoDraftCreated(beforeHistory, afterHistory)
     ) {
-      return { error: "edge_draft_not_created" };
+      return mutationFailure(
+        "edge_draft_not_created",
+        beforeHistory,
+        afterHistory,
+        {
+          writeObserved: Boolean(added),
+          targetKeys,
+        },
+      );
     }
     return {
       added: true,
       edgeKey: edgeKey(waypointIds[0], waypointIds[1]),
-      editIndex: Number.isInteger(afterIndex) ? afterIndex : null,
+      editIndex: afterHistory.editIndex,
+      undoDepth: afterHistory.undoDepth,
+      draftIndexDelta:
+        Number.isInteger(beforeHistory.editIndex) &&
+        Number.isInteger(afterHistory.editIndex)
+          ? afterHistory.editIndex - beforeHistory.editIndex
+          : null,
     };
   }
 
@@ -389,9 +583,7 @@
       if (
         active.siteMapId !== mapId ||
         !sameWaypointPair(active.edge?.id, waypointIds)
-      ) {
-        return { error: "map_or_waypoint_mismatch" };
-      }
+      ) return { error: "edge_not_found" };
       keys.push(key);
       activeEdges.push(active);
     }
@@ -410,31 +602,70 @@
       return { error: "orbit_selection_changed" };
     }
 
-    const beforeIndex = store.getState()?.mapEditor?.form?.present?.index;
-    store.dispatch({ type: ARCHIVE_SITE_EDGES_ACTION_TYPE, payload: activeEdges });
-    const finalState = store.getState();
-    const afterIndex = finalState?.mapEditor?.form?.present?.index;
-    store.dispatch({ type: SELECT_EDGES_ACTION_TYPE, payload: [] });
+    const beforeHistory = historyState(store.getState()?.mapEditor?.form);
+    let finalState;
+    let afterHistory;
+    try {
+      store.dispatch({ type: ARCHIVE_SITE_EDGES_ACTION_TYPE, payload: activeEdges });
+      finalState = store.getState();
+      afterHistory = historyState(finalState?.mapEditor?.form);
+    } catch {
+      try {
+        store.dispatch({ type: SELECT_EDGES_ACTION_TYPE, payload: [] });
+      } catch {
+        // The mutation result is already ambiguous; selection cleanup is best effort.
+      }
+      return mutationFailure(
+        "native_mutation_exception",
+        beforeHistory,
+        safeHistoryState(store),
+        {
+          dispatchAttempted: true,
+          targetKeys: keys,
+        },
+      );
+    }
+    try {
+      store.dispatch({ type: SELECT_EDGES_ACTION_TYPE, payload: [] });
+    } catch {
+      // Selection cleanup cannot change the native graph draft.
+    }
+    const archivedKeys = keys.filter((key, index) => {
+      const archived = finalState?.mapEditor?.form?.data?.edges?.nonEntities?.[key];
+      return (
+        archived?.archived &&
+        !archived.disabled &&
+        archived.siteMapId === mapId &&
+        sameWaypointPair(archived.edge?.id, waypointPairs[index])
+      );
+    });
     if (
       finalState?.mapDisplay?.siteMapId !== mapId ||
-      keys.some((key, index) => {
-        const archived = finalState?.mapEditor?.form?.data?.edges?.nonEntities?.[key];
-        return (
-          !archived?.archived ||
-          archived.disabled ||
-          archived.siteMapId !== mapId ||
-          !sameWaypointPair(archived.edge?.id, waypointPairs[index])
-        );
-      }) ||
-      (Number.isInteger(beforeIndex) && afterIndex !== beforeIndex + 1)
+      currentMapId() !== mapId ||
+      archivedKeys.length !== keys.length ||
+      !oneUndoDraftCreated(beforeHistory, afterHistory)
     ) {
-      return { error: "edge_archive_batch_not_created" };
+      return mutationFailure(
+        "edge_archive_batch_not_created",
+        beforeHistory,
+        afterHistory,
+        {
+          writeObserved: archivedKeys.length > 0,
+          targetKeys: keys,
+        },
+      );
     }
     return {
       archived: true,
       archivedCount: keys.length,
       edgeKeys: keys,
-      editIndex: Number.isInteger(afterIndex) ? afterIndex : null,
+      editIndex: afterHistory.editIndex,
+      undoDepth: afterHistory.undoDepth,
+      draftIndexDelta:
+        Number.isInteger(beforeHistory.editIndex) &&
+        Number.isInteger(afterHistory.editIndex)
+          ? afterHistory.editIndex - beforeHistory.editIndex
+          : null,
     };
   }
 
@@ -503,8 +734,8 @@
           edge: {
             ...active.edge,
             annotations: {
+              ...(active.edge.annotations || {}),
               ...desired,
-              edgeSource: active.edge.annotations?.edgeSource ?? 0,
             },
           },
         };
@@ -516,37 +747,117 @@
       return { error: error?.message || "invalid_edge_settings" };
     }
 
-    const beforeIndex = initialState?.mapEditor?.form?.present?.index;
-    store.dispatch({
-      type: UPDATE_SITE_EDGES_ACTION_TYPE,
-      payload: { updatedEdges, originalEdgesById },
-    });
-    const finalState = store.getState();
-    const afterIndex = finalState?.mapEditor?.form?.present?.index;
+    const beforeHistory = historyState(initialState?.mapEditor?.form);
+    let finalState;
+    let afterHistory;
+    let observedEditedKeys = [];
+    try {
+      store.dispatch({
+        type: UPDATE_SITE_EDGES_ACTION_TYPE,
+        payload: { updatedEdges, originalEdgesById },
+      });
+      finalState = store.getState();
+      afterHistory = historyState(finalState?.mapEditor?.form);
+      observedEditedKeys = keys.filter((key, index) =>
+        Boolean(editedEdgeOverride(finalState, updates[index].waypointIds))
+      );
+    } catch {
+      return mutationFailure(
+        "native_mutation_exception",
+        beforeHistory,
+        safeHistoryState(store),
+        {
+          dispatchAttempted: true,
+          targetKeys: keys,
+        },
+      );
+    }
+    let verifiedUpdatedKeys;
+    let annotationLossKeys;
+    try {
+      annotationLossKeys = keys.filter((key, index) => {
+        const edited = editedEdgeOverride(finalState, updates[index].waypointIds);
+        const original = originalEdgesById[key];
+        return Boolean(
+          edited &&
+          original &&
+          !sameSettings(
+            unmodeledAnnotations(edited.edge?.annotations),
+            unmodeledAnnotations(original.edge?.annotations),
+          )
+        );
+      });
+      verifiedUpdatedKeys = keys.filter((key, index) => {
+        const edited = editedEdgeOverride(finalState, updates[index].waypointIds);
+        const original = originalEdgesById[key];
+        return Boolean(
+          edited &&
+          original &&
+          !edited.archived &&
+          !edited.disabled &&
+          edited.siteMapId === mapId &&
+          sameWaypointPair(edited.edge?.id, updates[index].waypointIds) &&
+          edited.edge?.annotations?.edgeSource ===
+            original.edge?.annotations?.edgeSource &&
+          sameSettings(
+            edgeSettings(edited.edge?.annotations),
+            requestedEdgeSettings(updates[index].desiredSettings),
+          ) &&
+          sameSettings(
+            unmodeledAnnotations(edited.edge?.annotations),
+            unmodeledAnnotations(original.edge?.annotations),
+          )
+        );
+      });
+    } catch {
+      return mutationFailure(
+        "edge_annotation_readback_failed",
+        beforeHistory,
+        afterHistory,
+        {
+          writeObserved: observedEditedKeys.length > 0,
+          targetKeys: keys,
+        },
+      );
+    }
+    if (annotationLossKeys.length) {
+      return mutationFailure(
+        "edge_annotation_readback_failed",
+        beforeHistory,
+        afterHistory,
+        {
+          writeObserved: observedEditedKeys.length > 0,
+          targetKeys: keys,
+        },
+      );
+    }
     if (
       finalState?.mapDisplay?.siteMapId !== mapId ||
-      keys.some((key, index) => {
-        const edited = editedEdgeOverride(finalState, updates[index].waypointIds);
-        return (
-          !edited ||
-          edited.archived ||
-          edited.disabled ||
-          edited.siteMapId !== mapId ||
-          !sameWaypointPair(edited.edge?.id, updates[index].waypointIds) ||
-          !sameSettings(edgeSettings(edited.edge?.annotations), requestedEdgeSettings(
-            updates[index].desiredSettings,
-          ))
-        );
-      }) ||
-      (Number.isInteger(beforeIndex) && afterIndex !== beforeIndex + 1)
+      currentMapId() !== mapId ||
+      verifiedUpdatedKeys.length !== keys.length ||
+      !oneUndoDraftCreated(beforeHistory, afterHistory)
     ) {
-      return { error: "edge_settings_draft_not_created" };
+      return mutationFailure(
+        "edge_settings_batch_not_created",
+        beforeHistory,
+        afterHistory,
+        {
+          writeObserved: observedEditedKeys.length > 0,
+          targetKeys: keys,
+        },
+      );
     }
     return {
       updated: true,
       updatedCount: keys.length,
       edgeKeys: keys,
-      editIndex: Number.isInteger(afterIndex) ? afterIndex : null,
+      editIndex: afterHistory.editIndex,
+      undoDepth: afterHistory.undoDepth,
+      draftIndexDelta:
+        Number.isInteger(beforeHistory.editIndex) &&
+        Number.isInteger(afterHistory.editIndex)
+          ? afterHistory.editIndex - beforeHistory.editIndex
+          : null,
     };
   }
 
@@ -904,18 +1215,27 @@
   }
 
   function respond(requestId, payload) {
+    if (disposed) return;
     window.postMessage(
-      { channel: CHANNEL, type: RESPONSE_TYPE, requestId, ...payload },
+      {
+        channel: CHANNEL,
+        type: RESPONSE_TYPE,
+        requestId,
+        ...(SESSION_ID ? { sessionId: SESSION_ID } : {}),
+        ...payload,
+      },
       location.origin,
     );
   }
 
-  window.addEventListener("message", async (event) => {
+  async function handleMessage(event) {
+    if (disposed) return;
     if (
       event.source !== window ||
       event.origin !== location.origin ||
       event.data?.channel !== CHANNEL ||
-      event.data?.type !== "orbit-graph-repair-request"
+      event.data?.type !== REQUEST_TYPE ||
+      SESSION_ID && event.data?.sessionId !== SESSION_ID
     ) return;
     const {
       requestId,
@@ -938,6 +1258,14 @@
         "update_settings_many",
       ].includes(command)
     ) return;
+    if (handledRequestIds.has(requestId)) {
+      respond(requestId, { ok: false, error: "duplicate_request" });
+      return;
+    }
+    handledRequestIds.add(requestId);
+    if (handledRequestIds.size > 2000) {
+      handledRequestIds.delete(handledRequestIds.values().next().value);
+    }
     if (mapId !== currentMapId()) {
       respond(requestId, { ok: false, error: "map_or_waypoint_mismatch" });
       return;
@@ -992,65 +1320,77 @@
       return;
     }
     if (command === "connect") {
-      const result = await connectWaypointPair(store, mapId, waypointIds);
-      if (!result.added) {
-        respond(requestId, { ok: false, error: result.error });
+      if (mutationInFlight) {
+        respond(requestId, { ok: false, error: "native_mutation_in_progress" });
         return;
       }
-      respond(requestId, {
-        ok: true,
-        added: true,
-        edgeKey: result.edgeKey,
-        editIndex: result.editIndex,
-        adapter: "orbit-5.1-native-edge-draft",
-      });
+      mutationInFlight = true;
+      try {
+        const result = await connectWaypointPair(store, mapId, waypointIds);
+        if (disposed) return;
+        if (!result.added) {
+          respond(requestId, { ok: false, ...result });
+          return;
+        }
+        respond(requestId, {
+          ok: true,
+          ...result,
+          adapter: "orbit-5.1-native-edge-draft",
+        });
+      } catch {
+        respond(requestId, {
+          ok: false,
+          error: "native_mutation_exception",
+          mutationMayExist: true,
+          targetKeys: [edgeKey(waypointIds[0], waypointIds[1])],
+        });
+      } finally {
+        mutationInFlight = false;
+      }
       return;
     }
-    if (command === "archive") {
-      const result = archiveWaypointPair(store, mapId, waypointIds);
-      if (!result.archived) {
-        respond(requestId, { ok: false, error: result.error });
+    if (["archive", "archive_many", "update_settings_many"].includes(command)) {
+      if (mutationInFlight) {
+        respond(requestId, { ok: false, error: "native_mutation_in_progress" });
         return;
       }
-      respond(requestId, {
-        ok: true,
-        archived: true,
-        edgeKey: result.edgeKey,
-        editIndex: result.editIndex,
-        adapter: "orbit-5.1-native-edge-archive-draft",
-      });
-      return;
-    }
-    if (command === "archive_many") {
-      const result = archiveWaypointPairs(store, mapId, waypointPairs);
-      if (!result.archived) {
-        respond(requestId, { ok: false, error: result.error });
-        return;
+      mutationInFlight = true;
+      try {
+        const result = command === "archive"
+          ? archiveWaypointPair(store, mapId, waypointIds)
+          : command === "archive_many"
+            ? archiveWaypointPairs(store, mapId, waypointPairs)
+            : updateEdgeSettings(store, mapId, settingsUpdates);
+        const succeeded = command === "update_settings_many"
+          ? result.updated
+          : result.archived;
+        if (!succeeded) {
+          respond(requestId, { ok: false, ...result });
+          return;
+        }
+        const adapter = command === "archive"
+          ? "orbit-5.1-native-edge-archive-draft"
+          : command === "archive_many"
+            ? "orbit-5.1-native-edge-batch-archive-draft"
+            : "orbit-5.1-native-edge-settings-batch-draft";
+        respond(requestId, { ok: true, ...result, adapter });
+      } catch {
+        const targetKeys = command === "archive"
+          ? [edgeKey(waypointIds[0], waypointIds[1])]
+          : command === "archive_many"
+            ? waypointPairs.map((pair) => edgeKey(pair[0], pair[1]))
+            : settingsUpdates.map((update) =>
+                edgeKey(update.waypointIds[0], update.waypointIds[1])
+              );
+        respond(requestId, {
+          ok: false,
+          error: "native_mutation_exception",
+          mutationMayExist: true,
+          targetKeys,
+        });
+      } finally {
+        mutationInFlight = false;
       }
-      respond(requestId, {
-        ok: true,
-        archived: true,
-        archivedCount: result.archivedCount,
-        edgeKeys: result.edgeKeys,
-        editIndex: result.editIndex,
-        adapter: "orbit-5.1-native-edge-batch-archive-draft",
-      });
-      return;
-    }
-    if (command === "update_settings_many") {
-      const result = updateEdgeSettings(store, mapId, settingsUpdates);
-      if (!result.updated) {
-        respond(requestId, { ok: false, error: result.error });
-        return;
-      }
-      respond(requestId, {
-        ok: true,
-        updated: true,
-        updatedCount: result.updatedCount,
-        edgeKeys: result.edgeKeys,
-        editIndex: result.editIndex,
-        adapter: "orbit-5.1-native-edge-settings-batch-draft",
-      });
       return;
     }
     const positions = anchorPositions(orbitState, waypointIds);
@@ -1066,10 +1406,27 @@
       positions,
       adapter: "orbit-5.1-mapDisplay/updateNeedsZoomToWaypoints",
     });
-  });
+  }
 
+  window.addEventListener("message", handleMessage);
+  globalThis[REGISTRY_KEY] = Object.freeze({
+    sessionId: SESSION_ID,
+    dispose() {
+      disposed = true;
+      window.removeEventListener("message", handleMessage);
+      handledRequestIds.clear();
+      mutationInFlight = false;
+      if (globalThis[REGISTRY_KEY]?.sessionId === SESSION_ID) {
+        delete globalThis[REGISTRY_KEY];
+      }
+    },
+  });
   window.postMessage(
-    { channel: CHANNEL, type: "orbit-graph-repair-ready" },
+    {
+      channel: CHANNEL,
+      type: READY_TYPE,
+      ...(SESSION_ID ? { sessionId: SESSION_ID } : {}),
+    },
     location.origin,
   );
 })();

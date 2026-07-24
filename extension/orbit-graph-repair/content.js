@@ -5,11 +5,23 @@
   const STORAGE_KEY = "orbitGraphRepairGuideStateV1";
   const BASELINE_STORAGE_KEY = "orbitGraphBaselineInventoryV1";
   const BRIDGE_CHANNEL = "orbit-graph-repair-v1";
+  const REQUEST_TYPE = "orbit-graph-repair-request";
+  const RESPONSE_TYPE = "orbit-graph-repair-response";
+  const READY_TYPE = "orbit-graph-repair-ready";
   const SVG_NS = "http://www.w3.org/2000/svg";
   const CAMERA_WIDTH_METERS = 10;
   const WAYPOINT_ADVISORY_LIMIT = 3000;
+  const MUTATION_COMMANDS = new Set([
+    "connect",
+    "archive",
+    "archive_many",
+    "update_settings_many",
+  ]);
 
   if (document.getElementById(ROOT_ID)) return;
+  const instanceId =
+    globalThis.crypto?.randomUUID?.() ||
+    `ogr-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
   const state = {
     guide: null,
@@ -36,6 +48,7 @@
     bulkArchiving: false,
     updatingSettingsIndex: null,
     bulkUpdatingSettings: false,
+    mutationUncertain: null,
   };
 
   const root = document.createElement("div");
@@ -93,6 +106,13 @@
         <button class="ogr-button ogr-clear" type="button" disabled>Remove guide</button>
       </div>
       <p class="ogr-status" role="status"></p>
+      <section class="ogr-mutation-lock" aria-live="assertive" hidden>
+        <strong>An unverified native draft may exist</strong>
+        <span class="ogr-mutation-lock-detail"></span>
+        <button class="ogr-button ogr-clear-mutation-lock" type="button">
+          Clear lock after inspection / recovery
+        </button>
+      </section>
       <div class="ogr-controls" hidden>
         <label>
           <span>Show</span>
@@ -153,6 +173,9 @@
     file: root.querySelector(".ogr-file"),
     clear: root.querySelector(".ogr-clear"),
     status: root.querySelector(".ogr-status"),
+    mutationLock: root.querySelector(".ogr-mutation-lock"),
+    mutationLockDetail: root.querySelector(".ogr-mutation-lock-detail"),
+    clearMutationLock: root.querySelector(".ogr-clear-mutation-lock"),
     controls: root.querySelector(".ogr-controls"),
     filter: root.querySelector(".ogr-filter"),
     previous: root.querySelector(".ogr-prev"),
@@ -227,6 +250,129 @@
   function currentMapId() {
     const match = location.pathname.match(/\/control_room\/maps\/([^/]+)\/edit/);
     return match ? decodeURIComponent(match[1]) : "";
+  }
+
+  function edgeKey(from, to) {
+    return from < to ? `${from}|${to}` : `${to}|${from}`;
+  }
+
+  function mutationTargetKeys(command, payload = {}) {
+    if (command === "connect" || command === "archive") {
+      return Array.isArray(payload.waypointIds) && payload.waypointIds.length === 2
+        ? [edgeKey(payload.waypointIds[0], payload.waypointIds[1])]
+        : [];
+    }
+    if (command === "archive_many") {
+      return (payload.waypointPairs || [])
+        .filter((pair) => Array.isArray(pair) && pair.length === 2)
+        .map((pair) => edgeKey(pair[0], pair[1]));
+    }
+    if (command === "update_settings_many") {
+      return (payload.settingsUpdates || [])
+        .map((update) => update?.waypointIds)
+        .filter((pair) => Array.isArray(pair) && pair.length === 2)
+        .map((pair) => edgeKey(pair[0], pair[1]));
+    }
+    return [];
+  }
+
+  function requestMutationContext(command, payload = {}) {
+    return {
+      command,
+      beforeEditIndex: null,
+      afterEditIndex: null,
+      beforeUndoDepth: null,
+      afterUndoDepth: null,
+      targetKeys: mutationTargetKeys(command, payload),
+    };
+  }
+
+  function bridgeError(
+    message,
+    {
+      command = "",
+      mutationMayExist = false,
+      mutationContext = {},
+      mutationBlocked = false,
+    } = {},
+  ) {
+    const error = new Error(message);
+    error.command = command;
+    error.mutationMayExist = Boolean(mutationMayExist);
+    error.mutationContext = {
+      command,
+      beforeEditIndex: mutationContext.beforeEditIndex ?? null,
+      afterEditIndex: mutationContext.afterEditIndex ?? null,
+      beforeUndoDepth: mutationContext.beforeUndoDepth ?? null,
+      afterUndoDepth: mutationContext.afterUndoDepth ?? null,
+      targetKeys: Array.isArray(mutationContext.targetKeys)
+        ? [...mutationContext.targetKeys]
+        : [],
+    };
+    error.mutationBlocked = Boolean(mutationBlocked);
+    return error;
+  }
+
+  function latchMutationUncertainty(command, error) {
+    if (!error?.mutationMayExist || state.mutationUncertain) return;
+    state.mutationUncertain = {
+      command,
+      timestamp: new Date().toISOString(),
+      mutationContext: {
+        command,
+        beforeEditIndex: error.mutationContext?.beforeEditIndex ?? null,
+        afterEditIndex: error.mutationContext?.afterEditIndex ?? null,
+        beforeUndoDepth: error.mutationContext?.beforeUndoDepth ?? null,
+        afterUndoDepth: error.mutationContext?.afterUndoDepth ?? null,
+        targetKeys: Array.isArray(error.mutationContext?.targetKeys)
+          ? [...error.mutationContext.targetKeys]
+          : [],
+      },
+    };
+    render();
+  }
+
+  function acknowledgeMutationUncertainty() {
+    const previous = state.mutationUncertain;
+    state.mutationUncertain = null;
+    setStatus(
+      "Mutation lock cleared after operator inspection or recovery. Refresh B0 comparison before editing.",
+      "warning",
+    );
+    render();
+    return previous;
+  }
+
+  function unverifiedMutationGuidance(error) {
+    const context = error?.mutationContext || {};
+    const history =
+      `Draft index ${context.beforeEditIndex ?? "?"}→${context.afterEditIndex ?? "?"}; ` +
+      `Undo depth ${context.beforeUndoDepth ?? "?"}→${context.afterUndoDepth ?? "?"}. `;
+    return (
+      `${history}Do not Save. Inspect the exact target and Orbit history. ` +
+      "Undo only if Orbit shows this change as the newest Undo step; " +
+      "otherwise reload Orbit or restore the backup."
+    );
+  }
+
+  function mutationFailureMessage(error, ordinaryMessage) {
+    if (!error?.mutationMayExist) {
+      return `${error?.message || String(error)} ${ordinaryMessage}`;
+    }
+    return (
+      "An unverified native draft may exist. Further edits are locked. " +
+      unverifiedMutationGuidance(error)
+    );
+  }
+
+  function rejectIfMutationLocked(command) {
+    if (!MUTATION_COMMANDS.has(command) || !state.mutationUncertain) return null;
+    return bridgeError("unverified_mutation_pending", {
+      command,
+      mutationMayExist: true,
+      mutationContext: state.mutationUncertain.mutationContext,
+      mutationBlocked: true,
+    });
   }
 
   function finiteNumber(value) {
@@ -811,6 +957,7 @@
         state.updatingSettingsIndex !== null ||
         state.bulkArchiving ||
         state.bulkUpdatingSettings ||
+        state.mutationUncertain !== null ||
         state.done.has(action.index);
       connect.addEventListener("click", () => connectInOrbit(action));
       buttons.append(connect);
@@ -832,6 +979,7 @@
         state.updatingSettingsIndex !== null ||
         state.bulkArchiving ||
         state.bulkUpdatingSettings ||
+        state.mutationUncertain !== null ||
         state.done.has(action.index);
       archive.addEventListener("click", () => archiveInOrbit(action));
       buttons.append(archive);
@@ -854,6 +1002,7 @@
         state.updatingSettingsIndex !== null ||
         state.bulkArchiving ||
         state.bulkUpdatingSettings ||
+        state.mutationUncertain !== null ||
         state.done.has(action.index);
       update.addEventListener("click", () => updateSettingsInOrbit([action]));
       buttons.append(update);
@@ -966,6 +1115,7 @@
       ? Number(state.deleteOverlay.counts?.internal_edges || 0)
       : deleteOverviewCount;
     const cutCount = Number(state.guide?.counts?.intentional_cut_edges || 0);
+    const mutationLocked = state.mutationUncertain !== null;
     elements.count.textContent = String(actions.length);
     elements.launchCount.textContent = String(actions.length);
     elements.clear.disabled = !state.guide;
@@ -1004,7 +1154,8 @@
       state.archivingIndex !== null ||
       state.updatingSettingsIndex !== null ||
       state.bulkArchiving ||
-      state.bulkUpdatingSettings;
+      state.bulkUpdatingSettings ||
+      mutationLocked;
     elements.settingsActions.hidden = !state.guide || updateCount === 0;
     elements.bulkCrosswalkSettings.textContent = state.bulkUpdatingSettings
       ? "Restoring settings…"
@@ -1019,7 +1170,8 @@
       state.archivingIndex !== null ||
       state.updatingSettingsIndex !== null ||
       state.bulkArchiving ||
-      state.bulkUpdatingSettings;
+      state.bulkUpdatingSettings ||
+      mutationLocked;
     elements.bulkEdgeSettings.disabled =
       !mapMatchesGuide() ||
       pendingSettings.length === 0 ||
@@ -1027,7 +1179,8 @@
       state.archivingIndex !== null ||
       state.updatingSettingsIndex !== null ||
       state.bulkArchiving ||
-      state.bulkUpdatingSettings;
+      state.bulkUpdatingSettings ||
+      mutationLocked;
     elements.summary.textContent = state.guide
       ? `${connectCount} connect · ${deleteCount} archive · ${updateCount} edge settings ` +
         `(${crosswalkUpdateCount} crosswalk) · ${cutCount} boundary · ${state.done.size} done`
@@ -1052,38 +1205,70 @@
     }
     elements.status.textContent = state.status;
     elements.status.dataset.kind = state.statusKind;
+    elements.mutationLock.hidden = !mutationLocked;
+    if (mutationLocked) {
+      elements.mutationLockDetail.textContent = unverifiedMutationGuidance({
+        mutationContext: state.mutationUncertain.mutationContext,
+      });
+    } else {
+      elements.mutationLockDetail.textContent = "";
+    }
     renderBaselineState();
     drawOverlay();
   }
 
-  function requestBridge(command, action) {
+  function requestBridge(command, action, timeoutOverrideMs = null) {
+    const locked = rejectIfMutationLocked(command);
+    if (locked) return Promise.reject(locked);
     if (!state.bridgeReady) {
       return Promise.reject(new Error("Orbit waypoint focus is still loading."));
     }
     if (!action || !mapMatchesGuide()) {
       return Promise.reject(new Error("Open the guide's exact Site Map first."));
     }
+    const payload = { waypointIds: [action.from, action.to] };
+    const isMutation = MUTATION_COMMANDS.has(command);
+    const mutationContext = requestMutationContext(command, payload);
     const requestId = `${Date.now()}-${state.requestSequence += 1}`;
     return new Promise((resolve, reject) => {
       const timeout = window.setTimeout(() => {
         state.pendingRequests.delete(requestId);
-        reject(new Error(
+        const error = bridgeError(
           command === "connect"
-            ? "Orbit edge validation did not respond."
+            ? "Orbit edge mutation did not respond."
             : command === "archive"
-            ? "Orbit edge archive did not respond."
+            ? "Orbit archive mutation did not respond."
             : "Orbit waypoint focus did not respond.",
-        ));
-      }, command === "connect" ? 18000 : 2500);
-      state.pendingRequests.set(requestId, { resolve, reject, timeout });
+          {
+            command,
+            mutationMayExist: isMutation,
+            mutationContext,
+          },
+        );
+        latchMutationUncertainty(command, error);
+        reject(error);
+      }, Number.isFinite(timeoutOverrideMs)
+        ? Math.max(0, timeoutOverrideMs)
+        : command === "connect"
+          ? 18000
+          : 2500);
+      state.pendingRequests.set(requestId, {
+        command,
+        isMutation,
+        mutationContext,
+        resolve,
+        reject,
+        timeout,
+      });
       window.postMessage(
         {
           channel: BRIDGE_CHANNEL,
-          type: "orbit-graph-repair-request",
+          type: REQUEST_TYPE,
           requestId,
+          sessionId: instanceId,
           command,
           mapId: state.guide.after_site_map.id,
-          waypointIds: [action.from, action.to],
+          ...payload,
         },
         location.origin,
       );
@@ -1091,27 +1276,48 @@
   }
 
   function requestArchiveBatch(actions) {
+    const command = "archive_many";
+    const locked = rejectIfMutationLocked(command);
+    if (locked) return Promise.reject(locked);
     if (!state.bridgeReady) {
       return Promise.reject(new Error("Orbit edge archive is still loading."));
     }
     if (!actions.length || !mapMatchesGuide()) {
       return Promise.reject(new Error("Open the guide's exact Site Map first."));
     }
+    const payload = {
+      waypointPairs: actions.map((action) => [action.from, action.to]),
+    };
+    const mutationContext = requestMutationContext(command, payload);
     const requestId = `${Date.now()}-${state.requestSequence += 1}`;
     return new Promise((resolve, reject) => {
       const timeout = window.setTimeout(() => {
         state.pendingRequests.delete(requestId);
-        reject(new Error("Orbit batch edge archive did not respond."));
+        const error = bridgeError("Orbit batch edge archive did not respond.", {
+          command,
+          mutationMayExist: true,
+          mutationContext,
+        });
+        latchMutationUncertainty(command, error);
+        reject(error);
       }, 12000);
-      state.pendingRequests.set(requestId, { resolve, reject, timeout });
+      state.pendingRequests.set(requestId, {
+        command,
+        isMutation: true,
+        mutationContext,
+        resolve,
+        reject,
+        timeout,
+      });
       window.postMessage(
         {
           channel: BRIDGE_CHANNEL,
-          type: "orbit-graph-repair-request",
+          type: REQUEST_TYPE,
           requestId,
-          command: "archive_many",
+          sessionId: instanceId,
+          command,
           mapId: state.guide.after_site_map.id,
-          waypointPairs: actions.map((action) => [action.from, action.to]),
+          ...payload,
         },
         location.origin,
       );
@@ -1119,34 +1325,55 @@
   }
 
   function requestSettingsBatch(actions) {
+    const command = "update_settings_many";
+    const locked = rejectIfMutationLocked(command);
+    if (locked) return Promise.reject(locked);
     if (!state.bridgeReady) {
       return Promise.reject(new Error("Orbit edge-settings adapter is still loading."));
     }
     if (!actions.length || !mapMatchesGuide()) {
       return Promise.reject(new Error("Open the guide's exact Site Map first."));
     }
+    const payload = {
+      settingsUpdates: actions.map((action) => ({
+        waypointIds: [action.from, action.to],
+        storedFrom: action.from,
+        storedTo: action.to,
+        observedSourceValue: action.observed_source_value,
+        observedSettings: action.observed_settings,
+        desiredSettings: action.desired_settings,
+      })),
+    };
+    const mutationContext = requestMutationContext(command, payload);
     const requestId = `${Date.now()}-${state.requestSequence += 1}`;
     return new Promise((resolve, reject) => {
       const timeout = window.setTimeout(() => {
         state.pendingRequests.delete(requestId);
-        reject(new Error("Orbit edge-settings update did not respond."));
+        const error = bridgeError("Orbit edge-settings update did not respond.", {
+          command,
+          mutationMayExist: true,
+          mutationContext,
+        });
+        latchMutationUncertainty(command, error);
+        reject(error);
       }, 12000);
-      state.pendingRequests.set(requestId, { resolve, reject, timeout });
+      state.pendingRequests.set(requestId, {
+        command,
+        isMutation: true,
+        mutationContext,
+        resolve,
+        reject,
+        timeout,
+      });
       window.postMessage(
         {
           channel: BRIDGE_CHANNEL,
-          type: "orbit-graph-repair-request",
+          type: REQUEST_TYPE,
           requestId,
-          command: "update_settings_many",
+          sessionId: instanceId,
+          command,
           mapId: state.guide.after_site_map.id,
-          settingsUpdates: actions.map((action) => ({
-            waypointIds: [action.from, action.to],
-            storedFrom: action.from,
-            storedTo: action.to,
-            observedSourceValue: action.observed_source_value,
-            observedSettings: action.observed_settings,
-            desiredSettings: action.desired_settings,
-          })),
+          ...payload,
         },
         location.origin,
       );
@@ -1169,8 +1396,9 @@
       window.postMessage(
         {
           channel: BRIDGE_CHANNEL,
-          type: "orbit-graph-repair-request",
+          type: REQUEST_TYPE,
           requestId,
+          sessionId: instanceId,
           command: "inspect",
           mapId,
         },
@@ -1195,8 +1423,9 @@
       window.postMessage(
         {
           channel: BRIDGE_CHANNEL,
-          type: "orbit-graph-repair-request",
+          type: REQUEST_TYPE,
           requestId,
+          sessionId: instanceId,
           command: "snapshot",
           mapId,
         },
@@ -1303,7 +1532,8 @@
       state.connectingIndex !== null ||
       state.updatingSettingsIndex !== null ||
       state.bulkArchiving ||
-      state.bulkUpdatingSettings
+      state.bulkUpdatingSettings ||
+      state.mutationUncertain !== null
     ) return;
     state.selectedIndex = action.index;
     state.connectingIndex = action.index;
@@ -1315,12 +1545,13 @@
       state.done.add(action.index);
       await persist();
       setStatus(
-        `Orbit created unsaved edge draft #${response.editIndex ?? "—"}. Review it, then use Orbit Save when ready.`,
+        `Orbit created unsaved edge draft #${response.editIndex ?? "—"} with Undo depth ` +
+        `${response.undoDepth ?? "—"}. Review it, then use Orbit Save when ready.`,
         "ok",
       );
     } catch (error) {
       setStatus(
-        `${error.message || String(error)} No edge draft was added.`,
+        mutationFailureMessage(error, "No edge draft was added."),
         "error",
       );
     } finally {
@@ -1339,7 +1570,8 @@
       state.archivingIndex !== null ||
       state.updatingSettingsIndex !== null ||
       state.bulkArchiving ||
-      state.bulkUpdatingSettings
+      state.bulkUpdatingSettings ||
+      state.mutationUncertain !== null
     ) return;
     const confirmed = window.confirm(
       `Archive this edge in Orbit's unsaved editor?\n\n` +
@@ -1361,12 +1593,13 @@
       state.done.add(action.index);
       await persist();
       setStatus(
-        `Orbit created unsaved archive draft #${response.editIndex ?? "—"}. Review it, then use Orbit Save when ready.`,
+        `Orbit created unsaved archive draft #${response.editIndex ?? "—"} with Undo depth ` +
+        `${response.undoDepth ?? "—"}. Review it, then use Orbit Save when ready.`,
         "ok",
       );
     } catch (error) {
       setStatus(
-        `${error.message || String(error)} No archive draft was added.`,
+        mutationFailureMessage(error, "No archive draft was added."),
         "error",
       );
     } finally {
@@ -1384,7 +1617,8 @@
       state.archivingIndex !== null ||
       state.updatingSettingsIndex !== null ||
       state.bulkArchiving ||
-      state.bulkUpdatingSettings
+      state.bulkUpdatingSettings ||
+      state.mutationUncertain !== null
     ) return;
     const confirmed = window.confirm(
       `Archive ${actions.length} pending edges in one Orbit unsaved edit?\n\n` +
@@ -1409,12 +1643,16 @@
       await persist();
       setStatus(
         `Orbit created one unsaved archive draft #${response.editIndex ?? "—"} containing ` +
-        `${actions.length} edges. Review it or use one Orbit Undo, then Save when ready.`,
+        `${actions.length} edges at Undo depth ${response.undoDepth ?? "—"}. ` +
+        "Review it or use one Orbit Undo, then Save when ready.",
         "ok",
       );
     } catch (error) {
       setStatus(
-        `${error.message || String(error)} Review Orbit's unsaved changes; the complete batch was not verified.`,
+        mutationFailureMessage(
+          error,
+          "Review Orbit's unsaved changes; the complete batch was not verified.",
+        ),
         "error",
       );
     } finally {
@@ -1437,7 +1675,8 @@
       state.archivingIndex !== null ||
       state.updatingSettingsIndex !== null ||
       state.bulkArchiving ||
-      state.bulkUpdatingSettings
+      state.bulkUpdatingSettings ||
+      state.mutationUncertain !== null
     ) return;
     const crosswalkCount = actions.filter((action) => action.crosswalk).length;
     const confirmed = window.confirm(
@@ -1466,12 +1705,13 @@
       setStatus(
         `Orbit created one unsaved edge-settings draft #${response.editIndex ?? "—"} ` +
         `containing ${actions.length} edge${actions.length === 1 ? "" : "s"} ` +
-        `(${crosswalkCount} crosswalk). Review it or use one Orbit Undo, then Save when ready.`,
+        `(${crosswalkCount} crosswalk) at Undo depth ${response.undoDepth ?? "—"}. ` +
+        "Review it or use one Orbit Undo, then Save when ready.",
         "ok",
       );
     } catch (error) {
       setStatus(
-        `${error.message || String(error)} No verified edge-settings batch was created.`,
+        mutationFailureMessage(error, "No verified edge-settings batch was created."),
         "error",
       );
     } finally {
@@ -1767,6 +2007,10 @@
   });
   elements.previous.addEventListener("click", () => step(-1));
   elements.next.addEventListener("click", () => step(1));
+  elements.clearMutationLock.addEventListener(
+    "click",
+    acknowledgeMutationUncertainty,
+  );
   elements.bulkArchive.addEventListener("click", archiveAllPendingInOrbit);
   elements.bulkCrosswalkSettings.addEventListener("click", () =>
     updateSettingsInOrbit(pendingSettingsActions(true), true)
@@ -1790,22 +2034,26 @@
     if (
       event.source !== window ||
       event.origin !== location.origin ||
-      event.data?.channel !== BRIDGE_CHANNEL
+      event.data?.channel !== BRIDGE_CHANNEL ||
+      event.data?.sessionId && event.data.sessionId !== instanceId
     ) return;
-    if (event.data.type === "orbit-graph-repair-ready") {
+    if (event.data.type === READY_TYPE) {
       state.bridgeReady = true;
       refreshInspector();
       if (state.baseline) compareBaselineToCurrentMap();
       if (selectedAction() && mapMatchesGuide()) resolveInOrbit(selectedAction(), false);
       return;
     }
-    if (event.data.type !== "orbit-graph-repair-response") return;
+    if (event.data.type !== RESPONSE_TYPE) return;
     const pending = state.pendingRequests.get(event.data.requestId);
     if (!pending) return;
     window.clearTimeout(pending.timeout);
     state.pendingRequests.delete(event.data.requestId);
-    if (event.data.ok) pending.resolve(event.data);
-    else pending.reject(new Error({
+    if (event.data.ok) {
+      pending.resolve(event.data);
+      return;
+    }
+    const message = {
       map_or_waypoint_mismatch: "The guide does not match this Orbit map.",
       orbit_store_unavailable: "This Orbit version does not expose the expected focus adapter.",
       orbit_map_not_loaded: "Orbit has not finished loading this Site Map.",
@@ -1818,7 +2066,14 @@
       edge_validation_failed: "Orbit rejected this edge candidate.",
       edge_validation_warning: "Orbit reported an edge warning; use the native Orbit controls to review it.",
       edge_validation_timeout: "Orbit did not finish validating this edge candidate.",
+      validation_changed_draft:
+        "Orbit validation unexpectedly changed the native draft history.",
+      native_validation_exception:
+        "Orbit raised an exception while validating the native edge candidate.",
       edge_draft_not_created: "Orbit did not add the validated edge to its edit history.",
+      bridge_disposed: "The Orbit adapter was replaced before the request completed.",
+      native_mutation_exception: "Orbit raised an exception while creating the native draft.",
+      native_mutation_in_progress: "Another native Orbit mutation is still in progress.",
       edge_not_found: "Orbit no longer has an active edge for this waypoint pair.",
       edge_already_archived: "This edge already has an unsaved archive draft.",
       edge_archive_not_created: "Orbit did not add the archive tombstone to its edit history.",
@@ -1833,14 +2088,32 @@
         "The edge source changed since the B0 comparison; refresh before restoring settings.",
       edge_settings_changed:
         "The edge settings changed since the B0 comparison; refresh before restoring settings.",
-      edge_settings_draft_not_created:
+      edge_annotation_readback_failed:
+        "Orbit did not preserve every existing edge annotation during read-back.",
+      edge_settings_batch_not_created:
         "Orbit did not add every settings update to one native edit-history step.",
-    }[event.data.error] || "Orbit editor action failed."));
+    }[event.data.error] || "Orbit editor action failed.";
+    const error = bridgeError(message, {
+      command: pending.command || "",
+      mutationMayExist: Boolean(event.data.mutationMayExist),
+      mutationContext: {
+        beforeEditIndex: event.data.beforeEditIndex ?? null,
+        afterEditIndex: event.data.afterEditIndex ?? null,
+        beforeUndoDepth: event.data.beforeUndoDepth ?? null,
+        afterUndoDepth: event.data.afterUndoDepth ?? null,
+        targetKeys: Array.isArray(event.data.targetKeys)
+          ? event.data.targetKeys
+          : pending.mutationContext?.targetKeys || [],
+      },
+    });
+    latchMutationUncertainty(pending.command || "", error);
+    pending.reject(error);
   });
 
   if (globalThis.chrome?.runtime?.getURL) {
     const bridge = document.createElement("script");
     bridge.src = chrome.runtime.getURL("page-bridge.js");
+    bridge.dataset.ogrSession = instanceId;
     bridge.addEventListener("load", () => bridge.remove());
     bridge.addEventListener("error", () => {
       bridge.remove();
@@ -1878,4 +2151,13 @@
   renderInspector();
   window.setInterval(refreshInspector, 750);
   requestAnimationFrame(projectionLoop);
+  globalThis.OrbitGraphRepairRuntime = Object.freeze({
+    acknowledgeMutationUncertainty,
+    instanceId,
+    requestArchiveBatch,
+    requestBridge,
+    requestSettingsBatch,
+    state,
+    unverifiedMutationGuidance,
+  });
 })();

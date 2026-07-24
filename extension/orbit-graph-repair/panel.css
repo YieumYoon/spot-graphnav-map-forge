@@ -541,6 +541,27 @@
   padding: 9px 14px;
 }
 
+#orbit-graph-repair-root .ogr-mutation-lock {
+  background: color-mix(in srgb, var(--ogr-delete) 12%, var(--ogr-panel));
+  border: 1px solid color-mix(in srgb, var(--ogr-delete) 55%, var(--ogr-border));
+  border-radius: 8px;
+  color: var(--ogr-text);
+  display: grid;
+  gap: 6px;
+  margin: 8px 14px;
+  padding: 10px;
+}
+
+#orbit-graph-repair-root .ogr-mutation-lock[hidden] {
+  display: none;
+}
+
+#orbit-graph-repair-root .ogr-mutation-lock-detail {
+  color: var(--ogr-muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
 @media (max-width: 760px) {
   #orbit-graph-repair-root .ogr-panel {
     left: 8px;
