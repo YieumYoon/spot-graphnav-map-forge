@@ -23,6 +23,9 @@
         "workflow.js",
         "walk-planner.js",
         "content.js",
+        "workspace-select.js",
+        "workspace-edit.js",
+        "workspace-validate.js",
         "advanced.js",
         "walk-ui.js"
       ],

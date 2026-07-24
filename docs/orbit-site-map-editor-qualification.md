@@ -74,11 +74,12 @@ These observations motivated 0.2.2. The final 0.2.2 probe is recorded below.
 Run:
 
 ```bash
-for file in extension/orbit-site-map-editor/*.js; do node --check "$file"; done
-uv run pytest
-uv run ruff check .
-uv run ruff format --check .
+uv run python scripts/check_editor_extension.py --full --release
 ```
+
+The canonical gate validates manifest references and dynamic build labels, checks every extension
+JavaScript file, runs the full pytest suite, and checks Ruff lint and formatting. Omit `--release`
+while a transient development `version_name` is active.
 
 The bridge simulations cover selection restoration, warning and duplicate rejection, exact live
 catalog projection, multi-object native selection, and exactly one Connect, batch Archive, or edge
@@ -134,6 +135,22 @@ The unpacked extension and Orbit tab were reloaded without creating a draft:
 
 Result: **passed**. Removing the History workflow did not affect live graph loading, editing
 controls, or Site View coverage planning. Internal draft/Undo safety telemetry remains active.
+
+## Development workflow and workspace-module probe — passed
+
+The unpacked extension was given a display-only development build label and qualified without
+creating a draft:
+
+1. Reloading the extension updated both the extension card and panel to the same manifest-derived
+   build label.
+2. Reloading the Orbit tab second reinjected exactly one editor root.
+3. The panel exposed exactly **Explore**, **Select**, **Edit**, **Validate**, and **Walk**.
+4. The separately loaded Select, Edit, and Validate workspace modules exposed their expected
+   controls.
+5. Orbit **Save** and **Cancel** remained disabled throughout the read-only probe.
+
+Result: **passed**. The build-label and module boundaries can distinguish a live feature branch
+without changing the numeric release or Orbit data.
 
 ## 0.3 live read-model shape audit — passed
 

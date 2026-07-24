@@ -15,8 +15,28 @@ The migration extension may remain installed.
 When updating an unpacked build, reload the extension first and then reload the Orbit tab. A
 previous page may report `Extension context invalidated` because Chrome has retired that content
 script; the extension fails closed and asks for one Orbit-tab reload instead of continuing to call
-extension APIs. The active panel must show version **0.5.0**. Chrome's extension error list may retain older
-errors until they are cleared.
+extension APIs. The active panel must show the manifest version or the temporary development build
+label. Chrome's extension error list may retain older errors until they are cleared.
+
+## Develop
+
+Use the repo-local `$orbit-extension-dev` skill when working with Codex. The repeatable local gates
+are:
+
+```bash
+uv run python scripts/check_editor_extension.py
+uv run python scripts/check_editor_extension.py --full
+```
+
+Before loading a feature branch in Chrome, add a display-only build label:
+
+```bash
+uv run python scripts/set_editor_build.py dev
+```
+
+After live qualification, remove that transient label with
+`uv run python scripts/set_editor_build.py release --keep-version`. Use
+`release <version>` only for an integration or release version change.
 
 ## Workflows
 

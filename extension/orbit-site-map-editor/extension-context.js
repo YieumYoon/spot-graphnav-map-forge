@@ -128,8 +128,23 @@
     }
   }
 
+  function getVersionLabel() {
+    if (!isActive()) return "reload required";
+    try {
+      const manifest = chrome.runtime.getManifest() || {};
+      const versionName =
+        typeof manifest.version_name === "string" ? manifest.version_name.trim() : "";
+      const version = typeof manifest.version === "string" ? manifest.version.trim() : "";
+      return versionName || version || "development";
+    } catch {
+      invalidate();
+      return "reload required";
+    }
+  }
+
   globalThis.OrbitSiteMapEditorExtensionContext = Object.freeze({
     getUrl,
+    getVersionLabel,
     invalidate,
     isActive,
     isInvalidated: () => invalidated,

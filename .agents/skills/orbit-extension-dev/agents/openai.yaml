@@ -1,0 +1,4 @@
+interface:
+  display_name: "Orbit Extension Dev"
+  short_description: "Develop and qualify the Orbit editor extension"
+  default_prompt: "Use $orbit-extension-dev to implement and qualify an Orbit Site Map Editor change."

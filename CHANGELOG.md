@@ -22,6 +22,9 @@ with prerelease labels while compatibility remains alpha.
 
 ### Added
 
+- Repo-local Orbit extension development skill, manifest-derived development build labels,
+  one-command static qualification, serialized live-Chrome guidance, and separately owned
+  Select/Edit/Validate workspace templates for parallel Worktree development.
 - Orbit Site Map Editor 0.3 Walk workspace with read-only SiteWalk/SiteElement/mission-route
   inspection, Action-order and Site View overlays, deterministic active-reachable graph walks,
   start/Dock anchoring, disconnected and isolated exclusion with an explicit audit mode, bounded

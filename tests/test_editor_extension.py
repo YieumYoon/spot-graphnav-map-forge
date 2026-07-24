@@ -15,6 +15,7 @@ def test_editor_extension_manifest_is_independent_and_minimal() -> None:
     assert manifest["manifest_version"] == 3
     assert manifest["name"] == "Orbit Site Map Editor"
     assert manifest["version"] == "0.5.0"
+    assert "version_name" not in manifest
     assert manifest["permissions"] == ["storage"]
     assert "host_permissions" not in manifest
     assert "background" not in manifest
@@ -31,6 +32,9 @@ def test_editor_extension_manifest_is_independent_and_minimal() -> None:
                 "workflow.js",
                 "walk-planner.js",
                 "content.js",
+                "workspace-select.js",
+                "workspace-edit.js",
+                "workspace-validate.js",
                 "advanced.js",
                 "walk-ui.js",
             ],
@@ -40,6 +44,47 @@ def test_editor_extension_manifest_is_independent_and_minimal() -> None:
     assert manifest["web_accessible_resources"] == [
         {"resources": ["page-bridge.js"], "matches": ["https://*/*"]}
     ]
+
+
+def test_workspace_templates_own_complete_non_overlapping_selectors() -> None:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for JavaScript workspace tests")
+    script = textwrap.dedent(
+        """
+        require("./extension/orbit-site-map-editor/workspace-select.js");
+        require("./extension/orbit-site-map-editor/workspace-edit.js");
+        require("./extension/orbit-site-map-editor/workspace-validate.js");
+        const panes = [
+          OrbitSiteMapEditorSelectWorkspace,
+          OrbitSiteMapEditorEditWorkspace,
+          OrbitSiteMapEditorValidateWorkspace,
+        ];
+        const selectors = panes.flatMap((pane) => pane.selectors);
+        process.stdout.write(JSON.stringify({
+          complete: panes.every((pane) => {
+            const markup = pane.render();
+            return pane.selectors.every((selector) =>
+              markup.includes(`osme-${selector}`)
+            );
+          }),
+          selectorCount: selectors.length,
+          uniqueSelectorCount: new Set(selectors).size,
+        }));
+        """
+    )
+
+    completed = subprocess.run(
+        [node, "-e", script],
+        cwd=Path.cwd(),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    result = json.loads(completed.stdout)
+
+    assert result["complete"] is True
+    assert result["selectorCount"] == result["uniqueSelectorCount"]
 
 
 def test_extension_context_fails_closed_after_unpacked_extension_reload() -> None:
@@ -65,7 +110,11 @@ def test_extension_context_fails_closed_after_unpacked_extension_reload() -> Non
               globalThis.chrome = {
                 runtime: {
                   id: "extension-id",
-                  getManifest: () => ({manifest_version: 3}),
+                  getManifest: () => ({
+                    manifest_version: 3,
+                    version: "0.5.0",
+                    version_name: "0.5.0 dev test",
+                  }),
                   getURL: (path) => `chrome-extension://extension-id/${path}`,
                   lastError: undefined,
                 },
@@ -79,6 +128,7 @@ def test_extension_context_fails_closed_after_unpacked_extension_reload() -> Non
                 read: await api.storageGet(["saved"]),
                 write: api.storageSet({value: 1}),
                 url: api.getUrl("page-bridge.js"),
+                version: api.getVersionLabel(),
                 saved,
                 invalidated: api.isInvalidated(),
               }));
@@ -214,6 +264,7 @@ def test_extension_context_fails_closed_after_unpacked_extension_reload() -> Non
         "read": {"saved": True},
         "write": True,
         "url": "chrome-extension://extension-id/page-bridge.js",
+        "version": "0.5.0 dev test",
         "saved": {"value": 1},
         "invalidated": False,
     }
@@ -1797,6 +1848,7 @@ def test_content_marks_mutation_timeout_and_invalidation_as_ambiguous() -> None:
           storageGet: () => new Promise(() => {}),
           storageSet: () => true,
           getUrl: () => "",
+          getVersionLabel: () => "0.5.0 test",
           onInvalidated(listener) {
             invalidationListener = listener;
             return () => {};
@@ -1977,6 +2029,15 @@ def test_content_marks_mutation_timeout_and_invalidation_as_ambiguous() -> None:
 
 def test_editor_advanced_ui_covers_agreed_workflows_and_stays_local() -> None:
     source = (EXTENSION / "advanced.js").read_text(encoding="utf-8")
+    workspace_source = "\n".join(
+        (EXTENSION / name).read_text(encoding="utf-8")
+        for name in (
+            "workspace-select.js",
+            "workspace-edit.js",
+            "workspace-validate.js",
+        )
+    )
+    ui_source = f"{source}\n{workspace_source}"
 
     for label in (
         "Exact-ID work selection",
@@ -1992,7 +2053,7 @@ def test_editor_advanced_ui_covers_agreed_workflows_and_stays_local() -> None:
         "Crosswalk audit",
         "Clear lock after inspection / restore",
     ):
-        assert label in source
+        assert label in ui_source
 
     assert 'runtime.requestBridge("select_entities"' in source
     assert 'runtime.requestBridge("archive_edges"' in source
@@ -2004,11 +2065,11 @@ def test_editor_advanced_ui_covers_agreed_workflows_and_stays_local() -> None:
     assert "tabSelectionRevision" in source
     assert "setTab(button.dataset.tab, { userInitiated: true })" in source
     assert '["explore", "select", "edit", "validate", "walk"]' in source
-    assert '["history", "History"]' not in source
-    assert 'data-workspace-tab="history"' not in source
-    assert "Draft monitor & local journal" not in source
-    assert "Local operation journal" not in source
-    assert "Edit plan" not in source
+    assert '["history", "History"]' not in ui_source
+    assert 'data-workspace-tab="history"' not in ui_source
+    assert "Draft monitor & local journal" not in ui_source
+    assert "Local operation journal" not in ui_source
+    assert "Edit plan" not in ui_source
     assert "workflow.parsePlan" not in source
     assert "workflow.serializePlan" not in source
     assert "state.journal" not in source
@@ -2017,6 +2078,8 @@ def test_editor_advanced_ui_covers_agreed_workflows_and_stays_local() -> None:
     assert "window.clearInterval(snapshotIntervalId)" in content
     assert "window.cancelAnimationFrame(overlayAnimationId)" in content
     assert "extensionContext.isActive()" in content
+    assert "extensionContext.getVersionLabel" in content
+    assert 'class="osme-version">0.5.0' not in content
     assert "sessionId: instanceId" in content
     assert "sortBy: state.searchSortBy" in content
     assert '"marker-end"' in content

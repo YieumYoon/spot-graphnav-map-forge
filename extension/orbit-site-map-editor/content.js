@@ -90,7 +90,7 @@
       <header class="osme-header">
         <div>
           <span class="osme-kicker">ORBIT SITE MAP</span>
-          <h2>Editor Assistant <span class="osme-version">0.5.0</span></h2>
+          <h2>Editor Assistant <span class="osme-version"></span></h2>
         </div>
         <button class="osme-icon-button osme-close" type="button" aria-label="Collapse">×</button>
       </header>
@@ -187,6 +187,8 @@
         Validation is selection-only. Connect creates one unsaved native Orbit draft and never presses Save.
       </footer>
     </aside>`;
+  root.querySelector(".osme-version").textContent =
+    extensionContext.getVersionLabel?.() || "development";
   document.documentElement.append(root);
 
   const elements = {

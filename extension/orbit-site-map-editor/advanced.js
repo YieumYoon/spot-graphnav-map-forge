@@ -6,7 +6,19 @@
   const validate = globalThis.OrbitSiteMapEditorValidation;
   const workflow = globalThis.OrbitSiteMapEditorWorkflow;
   const extensionContext = globalThis.OrbitSiteMapEditorExtensionContext;
-  if (!runtime || !select || !validate || !workflow || !extensionContext) return;
+  const workspacePanes = [
+    globalThis.OrbitSiteMapEditorSelectWorkspace,
+    globalThis.OrbitSiteMapEditorEditWorkspace,
+    globalThis.OrbitSiteMapEditorValidateWorkspace,
+  ];
+  if (
+    !runtime ||
+    !select ||
+    !validate ||
+    !workflow ||
+    !extensionContext ||
+    workspacePanes.some((pane) => !pane?.render || !Array.isArray(pane.selectors))
+  ) return;
   if (
     !runtime.instanceId ||
     !runtime.disposeEvent ||
@@ -78,168 +90,11 @@
 
   const workspace = document.createElement("div");
   workspace.className = "osme-workspace";
-  workspace.innerHTML = `
-    <section class="osme-section osme-advanced-pane" data-workspace-tab="select">
-      <div class="osme-section-heading">
-        <div><span>SELECT</span><strong>Exact-ID work selection</strong></div>
-        <span class="osme-selection-count"></span>
-      </div>
-      <div class="osme-toolbar">
-        <select class="osme-selection-mode" aria-label="Selection algebra">
-          <option value="replace">Replace</option>
-          <option value="add">Add</option>
-          <option value="subtract">Subtract</option>
-          <option value="intersect">Intersect</option>
-        </select>
-        <button class="osme-button osme-from-orbit" type="button">Use Orbit selection</button>
-        <button class="osme-button osme-invert" type="button">Invert</button>
-        <button class="osme-button osme-clear-selection" type="button">Clear</button>
-        <button class="osme-button osme-primary osme-apply-selection" type="button">Select in Orbit</button>
-      </div>
-      <div class="osme-selection-summary"></div>
-      <div class="osme-subsection">
-        <strong>Query builder</strong>
-        <input class="osme-field osme-query-builder" type="text"
-          placeholder="type:edge source:manual recording:&lt;id&gt; setting:stairs">
-        <div class="osme-toolbar">
-          <button class="osme-button osme-run-query" type="button">Run query</button>
-          <button class="osme-button osme-query-to-selection" type="button">Apply results</button>
-        </div>
-        <div class="osme-query-summary"></div>
-      </div>
-      <div class="osme-subsection">
-        <strong>Graph & recording</strong>
-        <div class="osme-toolbar">
-          <button class="osme-button osme-neighbors" type="button">1-hop neighbors</button>
-          <input class="osme-field osme-hop-count" type="number"
-            min="1" max="1000" step="1" value="2" aria-label="N-hop radius">
-          <button class="osme-button osme-n-hop" type="button">N-hop</button>
-          <button class="osme-button osme-component" type="button">Component</button>
-          <button class="osme-button osme-recording" type="button">Same recording</button>
-          <button class="osme-button osme-leaves" type="button">Leaves</button>
-          <button class="osme-button osme-bridges" type="button">Bridge edges</button>
-        </div>
-        <div class="osme-toolbar">
-          <input class="osme-field osme-select-path-start" type="text"
-            placeholder="path start waypoint ID">
-          <input class="osme-field osme-select-path-end" type="text"
-            placeholder="path end waypoint ID">
-          <button class="osme-button osme-select-path" type="button">Shortest path</button>
-        </div>
-      </div>
-      <div class="osme-subsection">
-        <strong>Spatial selection</strong>
-        <div class="osme-toolbar">
-          <button class="osme-button osme-viewport" type="button">Current viewport</button>
-          <input class="osme-field osme-rectangle" type="text"
-            placeholder="rectangle: x1,y1,x2,y2">
-          <button class="osme-button osme-apply-rectangle" type="button">Rectangle</button>
-        </div>
-        <textarea class="osme-field osme-polygon" rows="2"
-          placeholder="polygon/lasso: one x,y point per line"></textarea>
-        <button class="osme-button osme-apply-polygon" type="button">Polygon / lasso</button>
-      </div>
-      <div class="osme-subsection">
-        <strong>Named selection sets</strong>
-        <div class="osme-toolbar">
-          <input class="osme-field osme-set-name" type="text" placeholder="Set name">
-          <button class="osme-button osme-save-set" type="button">Save set</button>
-        </div>
-        <div class="osme-named-sets"></div>
-      </div>
-    </section>
-    <section class="osme-section osme-advanced-pane" data-workspace-tab="edit">
-      <div class="osme-section-heading">
-        <div><span>EDIT</span><strong>Archive & edge settings</strong></div>
-        <span class="osme-safety-chip">one native draft</span>
-      </div>
-      <div class="osme-uncertainty-recovery"></div>
-      <div class="osme-toolbar">
-        <button class="osme-button osme-preview-archive" type="button">Archive selected edges</button>
-        <button class="osme-button osme-copy-settings" type="button">Copy settings</button>
-        <button class="osme-button osme-preview-paste" type="button">Paste settings</button>
-        <select class="osme-preset-list" aria-label="Edge setting preset"></select>
-        <button class="osme-button osme-use-preset" type="button">Use preset</button>
-      </div>
-      <div class="osme-settings-clipboard"></div>
-      <div class="osme-settings-matrix"></div>
-      <div class="osme-subsection">
-        <strong>Preset library</strong>
-        <div class="osme-toolbar">
-          <input class="osme-field osme-preset-name" type="text" placeholder="Preset name">
-          <button class="osme-button osme-save-preset" type="button">Save copied settings</button>
-          <button class="osme-button osme-show-presets" type="button">Show JSON</button>
-          <button class="osme-button osme-import-presets" type="button">Import JSON</button>
-        </div>
-        <textarea class="osme-field osme-preset-json" rows="4"
-          placeholder="Shareable preset library JSON; no Site Map data"></textarea>
-      </div>
-      <div class="osme-mutation-review" hidden>
-        <strong class="osme-mutation-title"></strong>
-        <div class="osme-mutation-detail"></div>
-        <div class="osme-toolbar">
-          <button class="osme-button osme-cancel-mutation" type="button">Cancel</button>
-          <button class="osme-button osme-primary osme-confirm-mutation" type="button">
-            Create unsaved draft
-          </button>
-        </div>
-      </div>
-      <div class="osme-subsection">
-        <strong>Connect queue</strong>
-        <textarea class="osme-field osme-queue-source" rows="3"
-          placeholder="one exact pair per line: waypoint-id-a, waypoint-id-b"></textarea>
-        <button class="osme-button osme-parse-queue" type="button">Parse queue</button>
-        <div class="osme-connect-queue"></div>
-      </div>
-    </section>
-    <section class="osme-section osme-advanced-pane" data-workspace-tab="validate">
-      <div class="osme-section-heading">
-        <div><span>VALIDATE</span><strong>Live graph findings</strong></div>
-        <button class="osme-button osme-run-validation" type="button">Run</button>
-      </div>
-      <div class="osme-validation-summary"></div>
-      <div class="osme-findings"></div>
-      <div class="osme-subsection">
-        <strong>Path inspector</strong>
-        <div class="osme-toolbar">
-          <input class="osme-field osme-path-start" type="text" placeholder="start waypoint ID">
-          <input class="osme-field osme-path-end" type="text" placeholder="end waypoint ID">
-          <button class="osme-button osme-inspect-path" type="button">Inspect</button>
-        </div>
-        <div class="osme-path-result"></div>
-      </div>
-      <div class="osme-subsection">
-        <strong>Reachability</strong>
-        <button class="osme-button osme-run-reachability" type="button">
-          From first selected waypoint
-        </button>
-        <div class="osme-reachability"></div>
-      </div>
-      <div class="osme-subsection">
-        <strong>Crosswalk audit</strong>
-        <button class="osme-button osme-run-crosswalk" type="button">Audit callbacks</button>
-        <div class="osme-crosswalks"></div>
-      </div>
-    </section>`;
+  workspace.innerHTML = workspacePanes.map((pane) => pane.render()).join("");
   root.querySelector(".osme-footer").before(workspace);
 
   const el = {};
-  for (const className of [
-    "selection-count", "selection-mode", "from-orbit", "invert", "clear-selection",
-    "apply-selection", "selection-summary", "query-builder", "run-query",
-    "query-to-selection", "query-summary", "neighbors", "hop-count", "n-hop",
-    "component", "recording", "leaves", "bridges", "select-path-start",
-    "select-path-end", "select-path", "viewport", "rectangle", "apply-rectangle", "polygon",
-    "apply-polygon", "set-name", "save-set", "named-sets", "preview-archive",
-    "copy-settings", "preview-paste", "preset-list", "use-preset",
-    "settings-clipboard", "settings-matrix", "preset-name", "save-preset",
-    "show-presets", "import-presets", "preset-json", "mutation-review", "mutation-title",
-    "mutation-detail", "cancel-mutation", "confirm-mutation", "uncertainty-recovery",
-    "queue-source", "parse-queue", "connect-queue", "run-validation",
-    "validation-summary", "findings", "path-start", "path-end", "inspect-path",
-    "path-result", "run-reachability", "reachability", "run-crosswalk",
-    "crosswalks",
-  ]) {
+  for (const className of workspacePanes.flatMap((pane) => pane.selectors)) {
     el[className.replaceAll("-", "_")] = workspace.querySelector(`.osme-${className}`);
   }
 
