@@ -5,7 +5,13 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from scripts.chrome_version import validate_chrome_version  # noqa: E402
+
 SET_BUILD = ROOT / "scripts" / "set_editor_build.py"
 SKILL = ROOT / ".agents" / "skills" / "orbit-extension-dev"
 
@@ -56,6 +62,15 @@ def test_editor_build_rejects_invalid_release_without_mutating_manifest(
 
     assert result.returncode != 0
     assert json.loads(manifest.read_text(encoding="utf-8")) == original
+
+
+def test_shared_chrome_version_contract_covers_manifest_limits() -> None:
+    assert validate_chrome_version("1") == "1"
+    assert validate_chrome_version("1.2.3.65535") == "1.2.3.65535"
+
+    for invalid in (None, "", "0", "1.2.3.4.5", "1.02", "1.65536", "1-beta"):
+        with pytest.raises(ValueError):
+            validate_chrome_version(invalid)
 
 
 def test_repo_skill_encodes_reload_order_and_single_browser_ownership() -> None:
