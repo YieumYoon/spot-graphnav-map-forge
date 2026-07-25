@@ -17,6 +17,29 @@ Use the Chrome profile that opens Orbit:
 
 Reload the extension and the Site Map page after pulling code changes.
 
+## Develop
+
+Run the Assistant-specific static gate before loading an unpacked change:
+
+```bash
+uv run python scripts/check_assistant_extension.py
+```
+
+Add a transient Chrome build label only with the Assistant manifest explicitly selected:
+
+```bash
+uv run python scripts/set_editor_build.py \
+  --manifest extension/orbit-graph-repair/manifest.json dev
+```
+
+Restore release metadata before committing or handing off:
+
+```bash
+uv run python scripts/set_editor_build.py \
+  --manifest extension/orbit-graph-repair/manifest.json release --keep-version
+uv run python scripts/check_assistant_extension.py --release
+```
+
 ## Create B0
 
 Create the baseline before changing **Select recordings**:

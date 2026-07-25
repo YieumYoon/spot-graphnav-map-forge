@@ -75,12 +75,17 @@ Run:
 
 ```bash
 uv run python scripts/check_editor_extension.py --full --release
+uv run python scripts/check_assistant_extension.py --release
 ```
 
 The canonical gate validates the active-package read-only boundary, manifest references and
 dynamic build labels, checks every extension JavaScript file, runs the full pytest suite, and
 checks Ruff lint and formatting. Omit `--release` while a transient development `version_name` is
 active.
+
+The Assistant gate independently validates its manifest version and file references, checks every
+Assistant JavaScript file, rejects a transient development label in release mode, and compares the
+manifest version with the Assistant release record.
 
 The bridge simulations cover selection restoration, warning and duplicate rejection, exact live
 catalog projection, multi-object native selection, and exactly one Connect, batch Archive, or edge
@@ -171,8 +176,6 @@ confirmed.
 - `scripts/set_editor_build.py` defaults to the Editor manifest. An Assistant development label
   requires an explicit `--manifest extension/orbit-graph-repair/manifest.json`; the default
   invocation cannot statically establish the Assistant build label.
-- There is no Assistant-specific counterpart to `scripts/check_editor_extension.py`. No canonical
-  static gate therefore checks the Assistant manifest version against its release expectations.
 - The `previousMatches` clear-and-reselect path requires repeating the exact native Connect after
   Undo against live Orbit selection state; static inspection cannot prove that runtime
   reselection behavior.
