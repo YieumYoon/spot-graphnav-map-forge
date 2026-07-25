@@ -1,7 +1,8 @@
 # Orbit Site Map Editor qualification
 
-This record separates observed runtime evidence from unverified assumptions. It contains no Site
-Map, recording, waypoint, edge, robot, or server identifiers.
+This record covers both Orbit Site Map extensions and separates observed runtime evidence from
+unverified assumptions. It contains no Site Map, recording, waypoint, edge, robot, or server
+identifiers.
 
 ## Qualified target
 
@@ -9,6 +10,8 @@ Map, recording, waypoint, edge, robot, or server identifiers.
 - Extension: `extension/orbit-site-map-editor`
 - Extension release: 0.5.0
 - Native edit adapter baseline: 0.2.2
+- Migration Assistant extension: `extension/orbit-graph-repair`
+- Migration Assistant release: 0.8.1
 - Qualification date: 2026-07-24
 
 Re-run the complete checklist after an Orbit upgrade or an adapter action-name change.
@@ -127,15 +130,12 @@ journal, before/after plan preview, and proposed-edit overlay are absent. Native
 verification still requires a positive draft-index change, exactly one new Undo step, and exact
 target read-back. The unverified-edit recovery control remains available in **Edit**.
 
-## 0.8.1 Migration Assistant mutation-safety probe — pending live execution
+## 0.8.1 Migration Assistant mutation-safety probe — passed
 
-The following working-tree notes have not been confirmed as executed runtime evidence. The
-`orbit-extension-dev` rule, “Never claim a live test that was not actually executed,” therefore
-requires this probe to remain pending.
-
-The notes describe a separately loaded `extension/orbit-graph-repair` development build checked
-against an authenticated Orbit 5.1 editor on 2026-07-24, without retaining private Site Map or
-graph identifiers:
+The separately loaded `extension/orbit-graph-repair` development build was executed against an
+authenticated Orbit 5.1 editor on 2026-07-24. The operator explicitly authorized reversible native
+drafts on a backed-up Site Map for this probe. No private Site Map or graph identifiers were
+retained.
 
 - Loading a matching B0 baseline produced the expected comparison guide without creating a draft.
 - Repeating **Connect in Orbit** for the same exact pair entered a fresh validation cycle and
@@ -166,25 +166,21 @@ graph identifiers:
 - One verified newest Undo removed the ambiguous draft while the mutation lock remained latched.
   Only explicit recovery acknowledgement cleared the lock and re-enabled editing.
 
-Recorded result: successful and rejected Connect, repeated-pair reselection, multi-edge Archive,
-multi-edge settings, and ambiguous post-dispatch mutation-lock paths were described as passing.
-This recorded result is **not qualified runtime evidence** until the live execution is explicitly
-confirmed.
+Result: **passed** for successful and rejected Connect, repeated-pair reselection, multi-edge
+Archive, multi-edge settings, and ambiguous post-dispatch mutation-lock paths. Orbit **Save** was
+never pressed. Every created draft was removed with the verified newest Undo step, the original B0
+comparison was restored to its starting Connect, Archive, and settings item counts, the temporary
+private guide was deleted, and the final state showed no selection and no unsaved draft.
 
 ## Pending verification
 
 - `scripts/set_editor_build.py` defaults to the Editor manifest. An Assistant development label
   requires an explicit `--manifest extension/orbit-graph-repair/manifest.json`; the default
   invocation cannot statically establish the Assistant build label.
-- The `previousMatches` clear-and-reselect path requires repeating the exact native Connect after
-  Undo against live Orbit selection state; static inspection cannot prove that runtime
-  reselection behavior.
-- Assistant batch Archive and settings each require an observed increase of exactly one native
-  Orbit Undo step and exact read-back; source and simulation checks cannot establish live Orbit
-  history behavior.
-- The unverified-draft lock UI requires an ambiguous post-dispatch result after a native draft may
-  exist; static inspection cannot establish the rendered controls, retained lock, and operator
-  recovery behavior in live Orbit.
+
+The `previousMatches` clear-and-reselect path, Assistant batch Archive and settings Undo depth, and
+the unverified-draft lock UI were pending here until the 0.8.1 probe recorded above executed them
+against live Orbit.
 
 ## 0.5.0 History workflow removal probe — passed
 
