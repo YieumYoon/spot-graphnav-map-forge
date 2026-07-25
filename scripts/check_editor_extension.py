@@ -11,11 +11,15 @@ import subprocess
 import sys
 from pathlib import Path
 
+if __package__:
+    from .chrome_version import validate_chrome_version
+else:
+    from chrome_version import validate_chrome_version
+
 ROOT = Path(__file__).resolve().parents[1]
 EXTENSION = ROOT / "extension" / "orbit-site-map-editor"
 MANIFEST = EXTENSION / "manifest.json"
 QUALIFICATION = ROOT / "docs" / "orbit-site-map-editor-qualification.md"
-VERSION_PATTERN = re.compile(r"^[0-9]+(?:\.[0-9]+){0,3}$")
 
 
 def fail(message: str) -> None:
@@ -29,19 +33,12 @@ def run(command: list[str]) -> None:
         raise SystemExit(completed.returncode)
 
 
-def validate_version(value: object) -> None:
-    if not isinstance(value, str) or not VERSION_PATTERN.fullmatch(value):
-        fail("manifest version must contain one to four dot-separated integers")
-    parts = value.split(".")
-    if all(int(part) == 0 for part in parts):
-        fail("manifest version cannot be all zero")
-    if any(int(part) > 65535 or (len(part) > 1 and part.startswith("0")) for part in parts):
-        fail("manifest version contains an invalid Chrome version component")
-
-
 def validate_manifest(*, release: bool) -> dict:
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
-    validate_version(manifest.get("version"))
+    try:
+        validate_chrome_version(manifest.get("version"))
+    except ValueError as error:
+        fail(f"manifest {error}")
     version_name = manifest.get("version_name")
     if version_name is not None and (not isinstance(version_name, str) or not version_name.strip()):
         fail("manifest version_name must be a non-empty string")

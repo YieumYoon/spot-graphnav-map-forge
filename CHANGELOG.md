@@ -4,8 +4,25 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Made the Migration Assistant report a mutation whose dispatch may have succeeded but whose
+  read-back failed as explicitly unverified, latch that state in the panel, and block later edits
+  until the operator clears it.
+- Proved the one native **Undo** step per accepted batch with the undo-stack depth instead of the
+  draft edit index, which can advance by more than one.
+- Closed active-boundary gaps: prefix matching for blocked network modules, recursive package-file
+  allowlisting, rejection of dynamic import escape hatches, and the complete archived-symbol list.
+- Made the release hygiene check inspect symlink members inside tar and zip distributions.
+
 ### Changed
 
+- Recorded that the two extensions stay separate no-build packages that duplicate adapter
+  contracts locally and compare them with cross-extension behavior tests.
+- Replaced extension source-text assertions with behavior tests that load the real modules, and
+  replaced the copied manifest listing with structural invariants.
+- Shared one Chrome extension version validator between the build-label and qualification scripts.
+- Reduced repository hygiene scanning in CI from five runs per push to one.
 - Made the Orbit Site Map Editor the primary product and retained the Migration Assistant as a
   separate same-instance workflow.
 - Reduced the Python CLI to read-only `inspect`, `graph-baseline`, and `reconcile-graph` commands.

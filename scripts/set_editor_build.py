@@ -5,27 +5,20 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import subprocess
 from pathlib import Path
 
+if __package__:
+    from .chrome_version import validate_chrome_version
+else:
+    from chrome_version import validate_chrome_version
+
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_MANIFEST = ROOT / "extension" / "orbit-site-map-editor" / "manifest.json"
-VERSION_PATTERN = re.compile(r"^[0-9]+(?:\.[0-9]+){0,3}$")
 
 
 def validate_version(value: str) -> str:
-    if not VERSION_PATTERN.fullmatch(value):
-        raise ValueError("version must contain one to four dot-separated integers")
-    parts = value.split(".")
-    if all(int(part) == 0 for part in parts):
-        raise ValueError("version cannot be all zero")
-    for part in parts:
-        if len(part) > 1 and part.startswith("0"):
-            raise ValueError("non-zero version components cannot start with zero")
-        if int(part) > 65535:
-            raise ValueError("version components must be at most 65535")
-    return value
+    return validate_chrome_version(value)
 
 
 def read_manifest(path: Path) -> dict:

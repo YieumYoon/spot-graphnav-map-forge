@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ast
 import sys
 from pathlib import Path
 
@@ -8,44 +7,38 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from scripts.check_active_boundary import (  # noqa: E402
-    ALLOWED_COMMANDS,
-    ALLOWED_MODULES,
+    ALLOWED_PACKAGE_FILES,
     collect_violations,
+    source_violations,
 )
-from spot_graphnav_map_forge.cli import _parser  # noqa: E402
 
 
 def test_active_package_boundary_is_allowlisted_and_read_only() -> None:
     assert collect_violations() == []
 
 
-def test_cli_exposes_only_read_only_support_commands() -> None:
-    parser = _parser()
-    subparsers = next(
-        action
-        for action in parser._actions  # noqa: SLF001 - argparse has no public choices accessor
-        if action.__class__.__name__ == "_SubParsersAction"
+def test_boundary_checker_rejects_nested_assets_and_import_escape_hatches(
+    tmp_path: Path,
+) -> None:
+    package = tmp_path / "spot_graphnav_map_forge"
+    for relative in ALLOWED_PACKAGE_FILES:
+        path = package / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("", encoding="utf-8")
+    (package / "cli.py").write_text(
+        "from urllib import request\n"
+        "plugin = __import__('legacy_plugin')\n"
+        "def build_workspace_payload():\n"
+        "    return request\n",
+        encoding="utf-8",
     )
+    nested_asset = package / "web_assets" / "app.js"
+    nested_asset.parent.mkdir()
+    nested_asset.write_text("legacy clone editor", encoding="utf-8")
 
-    assert set(subparsers.choices) == ALLOWED_COMMANDS
+    violations = source_violations(package)
 
-
-def test_boundary_checker_defines_each_active_module_explicitly() -> None:
-    observed = {path.stem for path in (ROOT / "src" / "spot_graphnav_map_forge").glob("*.py")}
-
-    assert observed == ALLOWED_MODULES
-
-
-def test_active_sources_have_no_dynamic_import_escape_hatch() -> None:
-    for source in (ROOT / "src" / "spot_graphnav_map_forge").glob("*.py"):
-        tree = ast.parse(source.read_text(encoding="utf-8"))
-        calls = [
-            node
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Call)
-            and (
-                (isinstance(node.func, ast.Name) and node.func.id == "__import__")
-                or (isinstance(node.func, ast.Attribute) and node.func.attr == "import_module")
-            )
-        ]
-        assert not calls, source.name
+    assert "unexpected active package file: web_assets/app.js" in violations
+    assert "cli.py: forbidden network import: urllib.request" in violations
+    assert "cli.py: dynamic import escape hatch" in violations
+    assert "cli.py: archived function definition: build_workspace_payload" in violations

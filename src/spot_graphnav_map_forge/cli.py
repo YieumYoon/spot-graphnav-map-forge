@@ -77,9 +77,10 @@ def _inspect(args: argparse.Namespace) -> int:
         actions = list_actions(archive)
         docks = list_docks(archive)
         pano_states = list_pano_states(archive)
+    map_waypoint_ids = {record.id: set(record.waypoint_ids) for record in maps}
     map_action_ids = {
         record.id: {
-            action.id for action in actions if action.waypoint_id in set(record.waypoint_ids)
+            action.id for action in actions if action.waypoint_id in map_waypoint_ids[record.id]
         }
         for record in maps
     }
@@ -101,11 +102,15 @@ def _inspect(args: argparse.Namespace) -> int:
         for record in maps
     }
     pano_counts = {
-        record.id: sum(1 for state in pano_states if state.waypoint_id in set(record.waypoint_ids))
+        record.id: sum(
+            1 for state in pano_states if state.waypoint_id in map_waypoint_ids[record.id]
+        )
         for record in maps
     }
     dock_counts = {
-        record.id: sum(1 for dock in docks if dock.docked_waypoint_id in set(record.waypoint_ids))
+        record.id: sum(
+            1 for dock in docks if dock.docked_waypoint_id in map_waypoint_ids[record.id]
+        )
         for record in maps
     }
     data = {

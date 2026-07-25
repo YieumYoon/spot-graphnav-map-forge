@@ -8,6 +8,19 @@ permissions:
   contents: read
 
 jobs:
+  hygiene:
+    name: Repository release hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          enable-cache: true
+          python-version: "3.11"
+      - run: uv sync --extra dev --frozen
+      - run: uv run python scripts/check_release_hygiene.py .
+      - run: uv run python scripts/check_assistant_extension.py --release
+
   test:
     name: Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
@@ -26,11 +39,10 @@ jobs:
       - run: uv run ruff check .
       - run: uv run ruff format --check .
       - run: uv run pytest
-      - run: uv run python scripts/check_release_hygiene.py .
 
   package:
     name: Build and inspect distributions
-    needs: test
+    needs: [hygiene, test]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
