@@ -5,6 +5,7 @@
   const REQUEST_TYPE = "orbit-site-map-editor-request";
   const RESPONSE_TYPE = "orbit-site-map-editor-response";
   const READY_TYPE = "orbit-site-map-editor-ready";
+  const ACTION_SELECTION_TYPE = "orbit-site-map-editor-action-selection";
   const REGISTRY_KEY = "__orbitSiteMapEditorBridgeV2";
   const SESSION_ID = String(document.currentScript?.dataset?.osmeSession || "");
   const FOCUS_ACTION_TYPE = "mapDisplay/updateNeedsZoomToWaypoints";
@@ -14,10 +15,12 @@
   const ADD_SITE_EDGE_ACTION_TYPE = "mapEditorFormSlice/addSiteEdge";
   const UPDATE_SITE_EDGES_ACTION_TYPE = "mapEditorFormSlice/updateSiteEdges";
   const ARCHIVE_SITE_EDGES_ACTION_TYPE = "mapEditorFormSlice/archiveSiteEdges";
+  const UPDATE_ACTION_NAMES_ACTION_TYPE = "missionsAndActionsForm/updateActions";
   const EDGE_SELECTION_TOOL = "edge_selection";
   const EDGE_VALIDATION_TIMEOUT_MS = 15000;
   const MAX_SELECTION_SIZE = 5000;
   const MAX_EDGE_BATCH_SIZE = 5000;
+  const MAX_ACTION_NAME_BATCH_SIZE = 5000;
   const EDGE_SETTING_FIELDS = [
     "stairs",
     "directionConstraint",
@@ -59,6 +62,26 @@
   let mutationInFlight = false;
   let validationInFlight = false;
   let disposed = false;
+  const historyRestorers = [];
+  let lastActionRouteId = searchParameter("action");
+
+  function searchParameter(name) {
+    const source = String(location.search || "").replace(/^\?/, "");
+    for (const segment of source.split("&")) {
+      if (!segment) continue;
+      const separator = segment.indexOf("=");
+      const rawKey = separator >= 0 ? segment.slice(0, separator) : segment;
+      const rawValue = separator >= 0 ? segment.slice(separator + 1) : "";
+      try {
+        if (decodeURIComponent(rawKey.replaceAll("+", " ")) === name) {
+          return decodeURIComponent(rawValue.replaceAll("+", " "));
+        }
+      } catch {
+        // Ignore malformed query segments supplied by the host page.
+      }
+    }
+    return "";
+  }
 
   function isCurrentBridge() {
     return Boolean(
@@ -71,6 +94,47 @@
     const match = location.pathname.match(/\/control_room\/maps\/([^/]+)\/edit/);
     return match ? decodeURIComponent(match[1]) : "";
   }
+
+  function currentActionRouteId() {
+    return searchParameter("action");
+  }
+
+  function publishActionRouteChange() {
+    if (!isCurrentBridge()) return;
+    const actionId = currentActionRouteId();
+    if (actionId === lastActionRouteId) return;
+    lastActionRouteId = actionId;
+    window.postMessage(
+      {
+        channel: CHANNEL,
+        type: ACTION_SELECTION_TYPE,
+        ...(SESSION_ID ? { sessionId: SESSION_ID } : {}),
+        actionId,
+      },
+      location.origin,
+    );
+  }
+
+  function observeHistoryMethod(methodName) {
+    const browserHistory = globalThis.history;
+    const original = browserHistory?.[methodName];
+    if (typeof original !== "function") return;
+    function observedHistoryMethod(...args) {
+      const result = original.apply(this, args);
+      publishActionRouteChange();
+      return result;
+    }
+    browserHistory[methodName] = observedHistoryMethod;
+    historyRestorers.push(() => {
+      if (browserHistory[methodName] === observedHistoryMethod) {
+        browserHistory[methodName] = original;
+      }
+    });
+  }
+
+  observeHistoryMethod("pushState");
+  observeHistoryMethod("replaceState");
+  window.addEventListener("popstate", publishActionRouteChange);
 
   function isStore(value) {
     return Boolean(
@@ -313,6 +377,30 @@
     );
   }
 
+  function validActionNameUpdates(value) {
+    return Boolean(
+      Array.isArray(value) &&
+      value.length > 0 &&
+      value.length <= MAX_ACTION_NAME_BATCH_SIZE &&
+      value.every(
+        (update) =>
+          update &&
+          typeof update.id === "string" &&
+          update.id.length > 0 &&
+          update.id.length <= 600 &&
+          typeof update.waypointId === "string" &&
+          update.waypointId.length > 0 &&
+          update.waypointId.length <= 256 &&
+          typeof update.observedName === "string" &&
+          update.observedName.length <= 512 &&
+          typeof update.desiredName === "string" &&
+          update.desiredName.length > 0 &&
+          update.desiredName.length <= 512 &&
+          /^[A-Z0-9._/-]+$/.test(update.desiredName),
+      )
+    );
+  }
+
   function edgeSourceName(value) {
     return EDGE_SOURCE_NAMES[value] || `source ${String(value ?? "unknown")}`;
   }
@@ -341,23 +429,78 @@
     return stored && !stored.archived && !stored.disabled ? stored : null;
   }
 
-  function allAnchorPositions(state) {
-    const positions = new Map();
+  function allAnchorTransforms(state) {
+    const transforms = new Map();
     for (const anchor of state?.mapDisplay?.anchoring?.anchors || []) {
-      const position = anchor?.seedTformWaypoint?.position;
+      const transform = anchor?.seedTformWaypoint;
+      const position = transform?.position;
       if (
         typeof anchor?.id === "string" &&
         Number.isFinite(position?.x) &&
         Number.isFinite(position?.y)
       ) {
-        positions.set(anchor.id, {
-          x: position.x,
-          y: position.y,
-          z: Number.isFinite(position.z) ? position.z : 0,
+        transforms.set(anchor.id, {
+          position: {
+            x: position.x,
+            y: position.y,
+            z: Number.isFinite(position.z) ? position.z : 0,
+          },
+          rotation: transform?.rotation || null,
         });
       }
     }
-    return positions;
+    return transforms;
+  }
+
+  function rotatePosition(position, rotation) {
+    if (
+      !rotation ||
+      ![rotation.x, rotation.y, rotation.z, rotation.w].every(Number.isFinite)
+    ) return { ...position };
+    const vector = {
+      x: position.x,
+      y: position.y,
+      z: Number.isFinite(position.z) ? position.z : 0,
+    };
+    const quaternionLength = Math.hypot(
+      rotation.x,
+      rotation.y,
+      rotation.z,
+      rotation.w,
+    );
+    if (!quaternionLength) return vector;
+    const x = rotation.x / quaternionLength;
+    const y = rotation.y / quaternionLength;
+    const z = rotation.z / quaternionLength;
+    const w = rotation.w / quaternionLength;
+    const dot = x * vector.x + y * vector.y + z * vector.z;
+    const cross = {
+      x: y * vector.z - z * vector.y,
+      y: z * vector.x - x * vector.z,
+      z: x * vector.y - y * vector.x,
+    };
+    const scale = w * w - x * x - y * y - z * z;
+    return {
+      x: 2 * dot * x + scale * vector.x + 2 * w * cross.x,
+      y: 2 * dot * y + scale * vector.y + 2 * w * cross.y,
+      z: 2 * dot * z + scale * vector.z + 2 * w * cross.z,
+    };
+  }
+
+  function actionMapPosition(entity, anchorTransforms) {
+    const direct = entityPosition(entity);
+    if (direct) return direct;
+    const offset = entity?.waypointTformBodyOffset?.position;
+    if (!Number.isFinite(offset?.x) || !Number.isFinite(offset?.y)) return null;
+    const waypointId = entityWaypointIds(entity).find((id) => anchorTransforms.has(id));
+    const anchor = anchorTransforms.get(waypointId);
+    if (!anchor) return null;
+    const rotated = rotatePosition(offset, anchor.rotation);
+    return {
+      x: anchor.position.x + rotated.x,
+      y: anchor.position.y + rotated.y,
+      z: anchor.position.z + rotated.z,
+    };
   }
 
   function effectiveEdges(state, waypointIdSet) {
@@ -415,6 +558,9 @@
       entity?.seedTformBody?.position,
       entity?.pose?.position,
       entity?.location?.position,
+      entity?.action?.position,
+      entity?.action?.pose?.position,
+      entity?.action?.location?.position,
     ]) {
       if (Number.isFinite(position?.x) && Number.isFinite(position?.y)) {
         return {
@@ -466,7 +612,13 @@
     return [...new Set(result)];
   }
 
-  function externalCatalog(state, mapId, kind, sliceNames) {
+  function externalCatalog(
+    state,
+    mapId,
+    kind,
+    sliceNames,
+    positionResolver = entityPosition,
+  ) {
     const adapter = entityAdapter(state, sliceNames);
     if (!adapter) return { adapter: "", records: [] };
     const records = [];
@@ -483,7 +635,7 @@
         name: entityName(entity),
         waypointIds: entityWaypointIds(entity),
         edgeIds: entityEdgeIds(entity),
-        position: entityPosition(entity),
+        position: positionResolver(entity),
         serviceName: String(
           entity.serviceName ||
           entity.callbackServiceName ||
@@ -502,6 +654,61 @@
       });
     }
     return { adapter: adapter.name, records };
+  }
+
+  function actionEntityId(entity, fallback = "") {
+    return String(entity?.uuid || entity?.id || entity?.actionId || fallback || "");
+  }
+
+  function actionRecord(entity, fallbackId = "", anchorTransforms = new Map()) {
+    const id = actionEntityId(entity, fallbackId);
+    if (!id || !entity || typeof entity !== "object") return null;
+    return {
+      kind: "action",
+      id,
+      name: entityName(entity),
+      waypointIds: entityWaypointIds(entity),
+      edgeIds: entityEdgeIds(entity),
+      position: actionMapPosition(entity, anchorTransforms),
+      serviceName: String(entity.serviceName || entity.callbackServiceName || ""),
+      type: String(entity.type || entity.actionType || ""),
+      crosswalk: false,
+      catalogPresent: true,
+      inferredFromEdge: false,
+      archived: Boolean(entity.archived),
+      disabled: Boolean(entity.disabled),
+    };
+  }
+
+  function effectiveActionCatalog(state, mapId, waypointIdSet, anchorTransforms) {
+    const published = externalCatalog(
+      state,
+      mapId,
+      "action",
+      ["siteActions", "siteElements", "autowalkActions", "actions"],
+      (entity) => actionMapPosition(entity, anchorTransforms),
+    );
+    const records = new Map(published.records.map((record) => [record.id, record]));
+    const drafts = state?.mapMissionsEditor?.form?.data?.actions;
+    for (const id of Object.keys(drafts?.nonEntities || {})) records.delete(String(id));
+    for (const id of drafts?.ids || Object.keys(drafts?.entities || {})) {
+      const entity = drafts?.entities?.[id];
+      const record = actionRecord(entity, id, anchorTransforms);
+      if (!record) continue;
+      const entityMapId = entity.siteMapId || entity.mapId || entity.siteMap?.id || "";
+      if (entityMapId && entityMapId !== mapId) continue;
+      if (
+        record.waypointIds.length &&
+        !record.waypointIds.some((waypointId) => waypointIdSet.has(waypointId))
+      ) continue;
+      records.set(record.id, record);
+    }
+    return {
+      adapter: drafts
+        ? `${published.adapter}+mapMissionsEditor.form.actions`
+        : published.adapter,
+      records: [...records.values()],
+    };
   }
 
   function edgeStateSnapshot(state, waypointIdSet) {
@@ -636,7 +843,7 @@
         recordingByWaypoint.set(waypointId, recordingId);
       }
     }
-    const anchors = allAnchorPositions(state);
+    const anchorTransforms = allAnchorTransforms(state);
     const edgeRecords = effectiveEdges(state, waypointIdSet);
     const edgeStates = edgeStateSnapshot(state, waypointIdSet);
     const degree = new Map(waypointIds.map((id) => [id, 0]));
@@ -689,7 +896,7 @@
         name: waypoint.annotations?.name || "",
         snapshotId: waypoint.snapshotId || "",
         creationTime: timestampString(waypoint.annotations?.creationTime),
-        position: anchors.get(id) || null,
+        position: anchorTransforms.get(id)?.position || null,
         rawPosition: waypoint.waypointTformKo?.position || null,
         recordingId,
         recordingName: recording?.name || "",
@@ -731,15 +938,11 @@
       ),
     );
     const actions = filterCatalogToMap(
-      externalCatalog(
-        state,
-        mapId,
-        "action",
-        ["siteActions", "siteElements", "autowalkActions", "actions"],
-      ),
+      effectiveActionCatalog(state, mapId, waypointIdSet, anchorTransforms),
       waypointIdSet,
     );
     const form = state?.mapEditor?.form;
+    const actionForm = state?.mapMissionsEditor?.form;
     const expectedWaypointCount = waypointIds.length;
     return {
       kind: "orbit_site_map_editor_live_snapshot",
@@ -757,7 +960,18 @@
           ? form.present.index > 0
           : null,
       },
+      actionEditIndex: Number.isInteger(actionForm?.present?.index)
+        ? actionForm.present.index
+        : null,
+      actionHistory: {
+        undoDepth: Array.isArray(actionForm?.past) ? actionForm.past.length : null,
+        redoDepth: Array.isArray(actionForm?.future) ? actionForm.future.length : null,
+        hasDraft: Number.isInteger(actionForm?.present?.index)
+          ? actionForm.present.index > 0
+          : null,
+      },
       activeTool: info.activeTool || "",
+      currentActionId: safeText(searchParameter("action"), 600),
       selectedWaypointIds: Array.isArray(info.selectedWaypointIds)
         ? [...info.selectedWaypointIds]
         : [],
@@ -765,7 +979,7 @@
         ? [...info.selectedEdgeIds]
         : [],
       recordingCount: recordingIds.length,
-      anchorCount: anchors.size,
+      anchorCount: anchorTransforms.size,
       load: {
         expectedWaypointCount,
         resolvedWaypointCount: waypoints.length,
@@ -939,6 +1153,14 @@
   function safeHistoryState(store) {
     try {
       return historyState(store.getState()?.mapEditor?.form);
+    } catch {
+      return { editIndex: null, undoDepth: null };
+    }
+  }
+
+  function safeActionHistoryState(store) {
+    try {
+      return historyState(store.getState()?.mapMissionsEditor?.form);
     } catch {
       return { editIndex: null, undoDepth: null };
     }
@@ -1509,6 +1731,155 @@
     };
   }
 
+  function rawActionEntities(state) {
+    const publishedAdapter = entityAdapter(
+      state,
+      ["siteActions", "siteElements", "autowalkActions", "actions"],
+    );
+    const published = new Map();
+    for (const id of publishedAdapter?.ids || []) {
+      const entity = publishedAdapter.entities[id];
+      const resolvedId = actionEntityId(entity, id);
+      if (resolvedId && entity) published.set(resolvedId, entity);
+    }
+    const effective = new Map(published);
+    const drafts = state?.mapMissionsEditor?.form?.data?.actions;
+    for (const id of Object.keys(drafts?.nonEntities || {})) {
+      effective.delete(String(id));
+    }
+    for (const id of drafts?.ids || Object.keys(drafts?.entities || {})) {
+      const entity = drafts?.entities?.[id];
+      const resolvedId = actionEntityId(entity, id);
+      if (resolvedId && entity) effective.set(resolvedId, entity);
+    }
+    return { published, effective };
+  }
+
+  function comparableAction(entity) {
+    const result = {};
+    for (const key of Object.keys(entity || {}).sort()) {
+      if (key === "name" || entity[key] === undefined) continue;
+      result[key] = normalizeJsonValue(entity[key], `action_${key}`);
+    }
+    return result;
+  }
+
+  function sameActionExceptName(left, right) {
+    return JSON.stringify(comparableAction(left)) === JSON.stringify(comparableAction(right));
+  }
+
+  function renameActions(store, mapId, updates) {
+    const initialState = store.getState();
+    const mapWaypointIds = new Set(
+      initialState?.siteMaps?.entities?.[mapId]?.waypointIds || [],
+    );
+    const { published, effective } = rawActionEntities(initialState);
+    const updatedActions = [];
+    const originalActionsById = {};
+    const targetIds = [];
+    const seenIds = new Set();
+    const desiredNames = new Map();
+
+    for (const update of updates) {
+      if (seenIds.has(update.id)) return { error: "duplicate_action_id" };
+      seenIds.add(update.id);
+      if (!mapWaypointIds.has(update.waypointId)) {
+        return { error: "map_or_waypoint_mismatch" };
+      }
+      const active = effective.get(update.id);
+      if (!active || typeof active.name !== "string") return { error: "action_not_found" };
+      if (active.name !== update.observedName) return { error: "action_name_changed" };
+      if (!entityWaypointIds(active).includes(update.waypointId)) {
+        return { error: "action_waypoint_changed" };
+      }
+      const previousOwner = desiredNames.get(update.desiredName);
+      if (previousOwner && previousOwner !== update.id) {
+        return { error: "duplicate_action_name" };
+      }
+      desiredNames.set(update.desiredName, update.id);
+      targetIds.push(update.id);
+      updatedActions.push({ ...active, name: update.desiredName });
+      originalActionsById[update.id] = published.get(update.id) || active;
+    }
+
+    for (const [id, action] of effective) {
+      if (seenIds.has(id)) continue;
+      const owner = desiredNames.get(String(action?.name || ""));
+      if (owner) return { error: "duplicate_action_name" };
+    }
+
+    const actionForm = initialState?.mapMissionsEditor?.form;
+    if (!actionForm) return { error: "orbit_action_form_unavailable" };
+    const beforeHistory = historyState(actionForm);
+    let finalState;
+    let afterHistory;
+    let writtenIds = [];
+    try {
+      store.dispatch({
+        type: UPDATE_ACTION_NAMES_ACTION_TYPE,
+        payload: { updatedActions, originalActionsById },
+      });
+      finalState = store.getState();
+      afterHistory = historyState(finalState?.mapMissionsEditor?.form);
+      const drafts = finalState?.mapMissionsEditor?.form?.data?.actions?.entities || {};
+      writtenIds = targetIds.filter((id) => Boolean(drafts[id]));
+    } catch {
+      return mutationFailure(
+        "native_mutation_exception",
+        beforeHistory,
+        safeActionHistoryState(store),
+        { dispatchAttempted: true, targetKeys: targetIds },
+      );
+    }
+
+    let verifiedIds = [];
+    try {
+      const drafts = finalState?.mapMissionsEditor?.form?.data?.actions?.entities || {};
+      verifiedIds = targetIds.filter((id, index) => {
+        const edited = drafts[id];
+        return Boolean(
+          edited &&
+          edited.name === updates[index].desiredName &&
+          entityWaypointIds(edited).includes(updates[index].waypointId) &&
+          sameActionExceptName(edited, updatedActions[index])
+        );
+      });
+    } catch {
+      return mutationFailure(
+        "action_name_readback_failed",
+        beforeHistory,
+        afterHistory,
+        { writeObserved: writtenIds.length > 0, targetKeys: targetIds },
+      );
+    }
+
+    if (
+      finalState?.mapDisplay?.siteMapId !== mapId ||
+      currentMapId() !== mapId ||
+      verifiedIds.length !== targetIds.length ||
+      !oneUndoDraftCreated(beforeHistory, afterHistory)
+    ) {
+      return mutationFailure(
+        "action_name_batch_not_created",
+        beforeHistory,
+        afterHistory,
+        { writeObserved: writtenIds.length > 0, targetKeys: targetIds },
+      );
+    }
+    return {
+      renamed: true,
+      updatedCount: targetIds.length,
+      actionIds: targetIds,
+      editIndex: afterHistory.editIndex,
+      undoDepth: afterHistory.undoDepth,
+      draftIndexDelta:
+        Number.isInteger(beforeHistory.editIndex) &&
+        Number.isInteger(afterHistory.editIndex)
+          ? afterHistory.editIndex - beforeHistory.editIndex
+          : null,
+    };
+  }
+
   function respond(requestId, payload) {
     if (disposed) return;
     window.postMessage(
@@ -1540,6 +1911,7 @@
       edgeIds = [],
       waypointPairs,
       settingsUpdates,
+      actionNameUpdates,
       focus = false,
     } = event.data;
     if (
@@ -1554,6 +1926,7 @@
         "connect",
         "archive_edges",
         "update_edge_settings",
+        "rename_actions",
       ].includes(command)
     ) return;
     if (handledRequestIds.has(requestId)) {
@@ -1584,6 +1957,10 @@
       !validSettingsUpdates(settingsUpdates)
     ) {
       respond(requestId, { ok: false, error: "invalid_settings_batch" });
+      return;
+    }
+    if (command === "rename_actions" && !validActionNameUpdates(actionNameUpdates)) {
+      respond(requestId, { ok: false, error: "invalid_action_name_batch" });
       return;
     }
     if (
@@ -1746,6 +2123,19 @@
         });
         return;
       }
+      if (command === "rename_actions") {
+        const result = renameActions(store, mapId, actionNameUpdates);
+        if (!result.renamed) {
+          respond(requestId, { ok: false, ...result });
+          return;
+        }
+        respond(requestId, {
+          ok: true,
+          ...result,
+          adapter: "orbit-5.1-native-action-name-batch-draft",
+        });
+        return;
+      }
       const connectResult = await connectWaypointPair(store, mapId, waypointIds);
       if (disposed) return;
       if (!connectResult.added) {
@@ -1768,6 +2158,8 @@
           ? (settingsUpdates || []).map((update) =>
               edgeKey(update.waypointIds[0], update.waypointIds[1])
             )
+          : command === "rename_actions"
+            ? (actionNameUpdates || []).map((update) => String(update?.id || ""))
           : validWaypointPair(waypointIds)
             ? [edgeKey(waypointIds[0], waypointIds[1])]
             : [];
@@ -1788,6 +2180,8 @@
     dispose() {
       disposed = true;
       window.removeEventListener("message", handleMessage);
+      window.removeEventListener("popstate", publishActionRouteChange);
+      for (const restore of historyRestorers.splice(0).reverse()) restore();
       handledRequestIds.clear();
       mutationInFlight = false;
       validationInFlight = false;

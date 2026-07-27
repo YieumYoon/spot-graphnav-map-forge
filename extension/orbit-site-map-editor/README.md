@@ -28,15 +28,17 @@ uv run python scripts/check_editor_extension.py
 uv run python scripts/check_editor_extension.py --full
 ```
 
-Before loading a feature branch in Chrome, add a display-only build label:
+Record each functional change with its semantic change type. This updates the numeric
+Chrome version and adds a display-only development label:
 
 ```bash
-uv run python scripts/set_editor_build.py dev
+uv run python scripts/set_editor_build.py bump feature --label action-names
 ```
 
-After live qualification, remove that transient label with
-`uv run python scripts/set_editor_build.py release --keep-version`. Use
-`release <version>` only for an integration or release version change.
+`fix` increments the patch component, `feature` increments the minor component, and `breaking`
+increments the major component. `bump` works even when a development label is already active.
+After live qualification, remove only the transient label with
+`uv run python scripts/set_editor_build.py release --keep-version`; the new numeric version remains.
 
 ## Workflows
 
@@ -44,9 +46,15 @@ After live qualification, remove that transient label with
 | --- | --- |
 | **Explore** | Search and sort waypoints, edges, recordings, Areas, Docks, fiducials, and Actions; inspect Orbit selection; configure overlays |
 | **Select** | Build exact-ID sets with queries, add/subtract/intersect/invert, N-hop/component/path/recording tools, viewport/rectangle/polygon selection, and named sets |
+| **Action Names** | Select Actions on the Orbit map, assign each inspection type, preview structured names, and apply one reviewed unsaved change; waypoint names are never changed |
 | **Edit** | Validate and Connect waypoint pairs, process a Connect queue, batch Archive edges, copy/paste edge settings, and share presets |
 | **Validate** | Inspect components, isolated/leaves/bridges/articulations, duplicate names/pairs, cross-recording edges, callback issues, paths, reachability, and crosswalks |
 | **Walk** | Create a mission-independent, read-only Site View coverage route with exact waypoint exclusions and numbered route targets |
+
+The header layout control defaults to a separate **Right** rail. **Left** moves that rail to the
+other side, and **Float** restores the original overlay. Rail modes reduce Orbit's own viewport
+width instead of covering its left or right panels, and the preference is retained across reloads.
+Collapsing or deactivating the extension releases the reserved space immediately.
 
 Search accepts plain text plus predicates:
 
@@ -100,6 +108,33 @@ For Connect, Archive, or edge settings:
 4. verify the exact result and one new Orbit **Undo** step;
 5. use that **Undo** or press **Save** yourself.
 
+The **Action Names** tab changes Action names only. It starts in **Normal** mode, where opening map
+Actions does not change the rename list. Switch to **Add Actions** only while building the list;
+each newly opened Action is then added in selection order. Leaving the tab or applying renames
+returns to Normal. Orbit waypoint selection is not used, and multiple Actions attached to one
+waypoint remain independent selections. Reopening an already selected Action does not duplicate
+it. Press `A` to toggle the mode; the shortcut is limited to this tab and ignored while typing.
+The fixed structure is
+`enterprise-site-area-[workCenter]-[equipment]-sequence-type`. Enterprise, site, and area are
+required. Work center and machine/equipment are optional and are omitted cleanly when blank. Enter
+the first sequence exactly as it should appear—for example `0001`; its leading zeros determine the
+display width. Each selected Action advances the sequence once and has its own `THRM`, `MECQ`,
+`LEAK`, or `AIVI` selector. The extension suggests a type from an existing suffix, Action name,
+and available Action metadata. When none provides a useful clue, the type remains blank. Review
+the suggestions and change any incorrect value. The complete preview updates immediately. Missing
+types, missing or stale Actions, and name collisions prevent applying the change.
+
+While **Action Names** is open, **Show Action names on map** independently controls translucent
+current-name labels and defaults to on; it does not depend on the Explore tab's Detailed overlay.
+Orbit stores each Action as a body-pose offset from its waypoint, so the extension composes that
+offset with the waypoint map transform and places the label beside the Action icon. Actions tied to
+the same waypoint keep their separate positions. The status below the toggle reports how many
+Actions expose enough position data to project.
+
+At a wide map scale the overlay samples one Action per evenly spaced screen cell, without giving
+the current or selected Action priority. Zooming in reduces the cell size until every Action in
+the visible area can show its own name from approximately `1.2×` zoom.
+
 The extension never presses **Save**, never calls a private server write API, and rejects stale,
 foreign, missing, duplicate, or changed targets. Connect validation is capped at 12 nearby
 candidates per batch and restores the previous Orbit selection.
@@ -125,7 +160,8 @@ The page adapter is qualified against the Orbit 5.1 editor actions:
 - `setSelectedWaypoints` / `setSelectedEdges`;
 - `addSiteEdge`;
 - `archiveSiteEdges`;
-- `updateSiteEdges`.
+- `updateSiteEdges`;
+- `missionsAndActionsForm/updateActions`.
 
 Re-run `docs/orbit-site-map-editor-qualification.md` after an Orbit upgrade. If a native action,
 read-back, positive draft-index change, or exactly-one Undo-depth check disagrees, the adapter

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Set a release version or transient development label for the editor extension."""
+"""Bump, label, or release an editor-extension build."""
 
 from __future__ import annotations
 
@@ -40,12 +40,31 @@ def git_text(*arguments: str) -> str:
     return completed.stdout.strip() if completed.returncode == 0 else ""
 
 
-def inferred_dev_label(version: str) -> str:
+def inferred_dev_identity() -> str:
     branch = git_text("branch", "--show-current") or "detached"
     revision = git_text("rev-parse", "--short", "HEAD") or "unknown"
     dirty = bool(git_text("status", "--porcelain"))
     suffix = " dirty" if dirty else ""
-    return f"{version} dev {branch}@{revision}{suffix}"
+    return f"{branch}@{revision}{suffix}"
+
+
+def bump_version(version: str, change: str) -> str:
+    parts = [int(part) for part in validate_version(version).split(".")]
+    if len(parts) != 3:
+        raise ValueError("automatic version bumps require a three-part version")
+    major, minor, patch = parts
+    if change == "fix":
+        patch += 1
+    elif change == "feature":
+        minor += 1
+        patch = 0
+    elif change == "breaking":
+        major += 1
+        minor = 0
+        patch = 0
+    else:
+        raise ValueError("unsupported change type")
+    return validate_version(f"{major}.{minor}.{patch}")
 
 
 def write_manifest(path: Path, manifest: dict) -> None:
@@ -56,6 +75,20 @@ def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(description=__doc__)
     root.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
     subparsers = root.add_subparsers(dest="command", required=True)
+
+    bump = subparsers.add_parser(
+        "bump",
+        help="bump the numeric version and set its development label",
+    )
+    bump.add_argument(
+        "change",
+        choices=("fix", "feature", "breaking"),
+        help="fix bumps patch, feature bumps minor, breaking bumps major",
+    )
+    bump.add_argument(
+        "--label",
+        help="short development label; defaults to branch and revision",
+    )
 
     dev = subparsers.add_parser("dev", help="add a transient display-only development label")
     dev.add_argument("--label", help="explicit label; defaults to version, branch, and revision")
@@ -75,11 +108,17 @@ def main(argv: list[str] | None = None) -> int:
     manifest_path = args.manifest.resolve()
     manifest = read_manifest(manifest_path)
 
-    if args.command == "dev":
-        label = (args.label or inferred_dev_label(manifest["version"])).strip()
-        if not label:
+    if args.command == "bump":
+        manifest["version"] = bump_version(manifest["version"], args.change)
+        identity = (args.label or inferred_dev_identity()).strip()
+        if not identity:
             raise ValueError("development label cannot be empty")
-        manifest["version_name"] = label[:256]
+        manifest["version_name"] = f"{manifest['version']} dev {identity}"[:256]
+    elif args.command == "dev":
+        identity = (args.label or inferred_dev_identity()).strip()
+        if not identity:
+            raise ValueError("development label cannot be empty")
+        manifest["version_name"] = f"{manifest['version']} dev {identity}"[:256]
     else:
         if args.keep_version == bool(args.version):
             raise ValueError("release requires either VERSION or --keep-version")

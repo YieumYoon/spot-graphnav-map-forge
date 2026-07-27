@@ -35,11 +35,16 @@ session.
    remains read-only and is checked by `scripts/check_active_boundary.py`.
 4. Do not hardcode the displayed extension version. Read it through
    `OrbitSiteMapEditorExtensionContext.getVersionLabel()`.
-5. Use a descriptive development label before a live reload:
+5. Bump the version for each functional change before a live reload:
 
    ```bash
-   uv run python scripts/set_editor_build.py dev
+   uv run python scripts/set_editor_build.py bump feature --label short-feature-name
    ```
+
+   Use `fix` for a patch bump, `feature` for a minor bump, and `breaking` for a major bump. The
+   command updates both the numeric Chrome version and transient `version_name`. It also works
+   while an earlier development label is active, so a new change does not require a release-label
+   cleanup first.
 
    Do not commit a transient `version_name`. Restore it after live qualification:
 
@@ -47,7 +52,7 @@ session.
    uv run python scripts/set_editor_build.py release --keep-version
    ```
 
-6. Change the numeric release only at an integration or release boundary:
+6. An explicit integration version remains available when a precise target is required:
 
    ```bash
    uv run python scripts/set_editor_build.py release 0.6.0

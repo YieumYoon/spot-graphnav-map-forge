@@ -34,7 +34,7 @@ def test_editor_build_labels_are_transient_and_release_versions_are_valid(
         encoding="utf-8",
     )
 
-    dev = run_build(manifest, "dev", "--label", "0.5.0 dev feature-a")
+    dev = run_build(manifest, "dev", "--label", "feature-a")
     assert dev.returncode == 0
     assert json.loads(manifest.read_text(encoding="utf-8"))["version_name"] == (
         "0.5.0 dev feature-a"
@@ -49,6 +49,32 @@ def test_editor_build_labels_are_transient_and_release_versions_are_valid(
     release = run_build(manifest, "release", "0.6.0")
     assert release.returncode == 0
     assert json.loads(manifest.read_text(encoding="utf-8"))["version"] == "0.6.0"
+
+
+def test_editor_build_bump_works_while_a_development_label_is_active(
+    tmp_path: Path,
+) -> None:
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps({"manifest_version": 3, "name": "Editor", "version": "0.5.0"}),
+        encoding="utf-8",
+    )
+
+    feature = run_build(manifest, "bump", "feature", "--label", "action-names")
+    assert feature.returncode == 0
+    active = json.loads(manifest.read_text(encoding="utf-8"))
+    assert active["version"] == "0.6.0"
+    assert active["version_name"] == "0.6.0 dev action-names"
+
+    assert run_build(manifest, "bump", "fix", "--label", "small-fix").returncode == 0
+    fixed = json.loads(manifest.read_text(encoding="utf-8"))
+    assert fixed["version"] == "0.6.1"
+    assert fixed["version_name"] == "0.6.1 dev small-fix"
+
+    assert run_build(manifest, "bump", "breaking", "--label", "new-api").returncode == 0
+    breaking = json.loads(manifest.read_text(encoding="utf-8"))
+    assert breaking["version"] == "1.0.0"
+    assert breaking["version_name"] == "1.0.0 dev new-api"
 
 
 def test_editor_build_rejects_invalid_release_without_mutating_manifest(

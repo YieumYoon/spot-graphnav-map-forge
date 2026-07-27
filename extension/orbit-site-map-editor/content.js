@@ -7,6 +7,7 @@
   const REQUEST_TYPE = "orbit-site-map-editor-request";
   const RESPONSE_TYPE = "orbit-site-map-editor-response";
   const READY_TYPE = "orbit-site-map-editor-ready";
+  const ACTION_SELECTION_TYPE = "orbit-site-map-editor-action-selection";
   const DISPOSE_EVENT = "orbit-site-map-editor-dispose-v1";
   const SVG_NS = "http://www.w3.org/2000/svg";
   const CAMERA_WIDTH_METERS = 10;
@@ -16,21 +17,31 @@
   const MAX_OVERLAY_EDGES = 750;
   const MAX_WALK_OVERLAY_SEGMENTS = 3000;
   const MAX_WALK_OVERLAY_MARKERS = 500;
+  const ACTION_NAME_LABEL_DENSITY_STEPS = [
+    { maxZoom: 0.7, cellWidth: 200, cellHeight: 36 },
+    { maxZoom: 0.85, cellWidth: 150, cellHeight: 30 },
+    { maxZoom: 1, cellWidth: 110, cellHeight: 26 },
+    { maxZoom: 1.2, cellWidth: 72, cellHeight: 22 },
+    { maxZoom: Infinity, cellWidth: 0, cellHeight: 0 },
+  ];
   const MUTATION_COMMANDS = new Set([
     "connect",
     "archive_edges",
     "update_edge_settings",
+    "rename_actions",
   ]);
   const extensionContext = globalThis.OrbitSiteMapEditorExtensionContext;
+  const panelLayout = globalThis.OrbitSiteMapEditorPanelLayout;
   const model = globalThis.OrbitSiteMapEditorModel;
   const queryEngine = globalThis.OrbitSiteMapEditorQuery;
 
-  if (!extensionContext || !model || !queryEngine) return;
+  if (!extensionContext || !panelLayout || !model || !queryEngine) return;
   const instanceId =
     globalThis.crypto?.randomUUID?.() ||
     `osme-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const instanceEvents = Object.freeze({
     addSelection: `osme:add-selection:${instanceId}`,
+    actionSelection: `osme:action-selection:${instanceId}`,
     snapshot: `osme:snapshot:${instanceId}`,
     mutationUncertain: `osme:mutation-uncertain:${instanceId}`,
   });
@@ -50,6 +61,7 @@
     status: "Waiting for Orbit's live Site Map…",
     statusKind: "neutral",
     panelOpen: true,
+    panelLayout: panelLayout.DEFAULT_LAYOUT,
     query: "",
     searchKind: "all",
     searchSortBy: "rank",
@@ -92,7 +104,20 @@
           <span class="osme-kicker">ORBIT SITE MAP</span>
           <h2>Editor Assistant <span class="osme-version"></span></h2>
         </div>
-        <button class="osme-icon-button osme-close" type="button" aria-label="Collapse">×</button>
+        <div class="osme-header-actions">
+          <div class="osme-layout-controls" role="group" aria-label="Panel layout">
+            <button type="button" data-panel-layout="rail-left" title="Separate left rail">
+              Left
+            </button>
+            <button type="button" data-panel-layout="float" title="Float over Orbit">
+              Float
+            </button>
+            <button type="button" data-panel-layout="rail-right" title="Separate right rail">
+              Right
+            </button>
+          </div>
+          <button class="osme-icon-button osme-close" type="button" aria-label="Collapse">×</button>
+        </div>
       </header>
       <div class="osme-status" role="status"></div>
       <section class="osme-summary" aria-label="Live Site Map summary"></section>
@@ -139,7 +164,7 @@
       <section class="osme-section osme-connect-section">
         <div class="osme-section-heading">
           <div><span>EDIT</span><strong>Connect mode</strong></div>
-          <span class="osme-safety-chip">native draft</span>
+          <span class="osme-safety-chip">unsaved change</span>
         </div>
         <div class="osme-connect-controls">
           <label>Radius
@@ -153,12 +178,12 @@
         <div class="osme-connect-summary"></div>
         <div class="osme-connect-confirmation" hidden>
           <span class="osme-kind">review connect pair</span>
-          <strong>Create one unsaved native Orbit draft?</strong>
+          <strong>Create one unsaved Orbit change?</strong>
           <div class="osme-connect-confirmation-details"></div>
           <div class="osme-connect-confirmation-actions">
             <button class="osme-button osme-cancel-connect" type="button">Cancel</button>
             <button class="osme-button osme-primary osme-confirm-connect" type="button">
-              Create unsaved draft
+              Apply unsaved change
             </button>
           </div>
         </div>
@@ -195,6 +220,7 @@
     overlay: root.querySelector(".osme-overlay"),
     launch: root.querySelector(".osme-launch"),
     panel: root.querySelector(".osme-panel"),
+    layoutControls: root.querySelector(".osme-layout-controls"),
     close: root.querySelector(".osme-close"),
     status: root.querySelector(".osme-status"),
     summary: root.querySelector(".osme-summary"),
@@ -219,9 +245,32 @@
   };
   let snapshotIntervalId = null;
   let overlayAnimationId = null;
+  let appliedPanelRail = "";
   let removeInvalidationListener = () => {};
 
+  function notifyOrbitViewportChanged() {
+    window.requestAnimationFrame(() => {
+      window.dispatchEvent(new Event("resize"));
+    });
+  }
+
+  function syncPanelLayout() {
+    const nextRail = panelLayout.apply(
+      document.documentElement,
+      state.panelLayout,
+      state.panelOpen,
+    );
+    if (nextRail === appliedPanelRail) return;
+    appliedPanelRail = nextRail;
+    notifyOrbitViewportChanged();
+  }
+
   function mutationTargetKeys(command, payload = {}) {
+    if (command === "rename_actions" && Array.isArray(payload.actionNameUpdates)) {
+      return payload.actionNameUpdates
+        .map((update) => String(update?.id || ""))
+        .filter(Boolean);
+    }
     if (command === "connect" && Array.isArray(payload.waypointIds)) {
       return payload.waypointIds.length === 2
         ? [model.edgeKey(payload.waypointIds[0], payload.waypointIds[1])]
@@ -245,11 +294,16 @@
   }
 
   function requestMutationContext(command, payload = {}) {
+    const actionMutation = command === "rename_actions";
     return {
       command,
-      beforeEditIndex: state.snapshot?.editIndex ?? null,
+      beforeEditIndex: actionMutation
+        ? state.snapshot?.actionEditIndex ?? null
+        : state.snapshot?.editIndex ?? null,
       afterEditIndex: null,
-      beforeUndoDepth: state.snapshot?.history?.undoDepth ?? null,
+      beforeUndoDepth: actionMutation
+        ? state.snapshot?.actionHistory?.undoDepth ?? null
+        : state.snapshot?.history?.undoDepth ?? null,
       afterUndoDepth: null,
       targetKeys: mutationTargetKeys(command, payload),
     };
@@ -339,6 +393,10 @@
     }
     state.pendingRequests.clear();
     elements.overlay.replaceChildren();
+    const releasedRail = Boolean(appliedPanelRail);
+    panelLayout.clear(document.documentElement);
+    appliedPanelRail = "";
+    if (releasedRail) notifyOrbitViewportChanged();
     root.dataset.inactive = "true";
     elements.panel.inert = true;
     setStatus(
@@ -379,6 +437,7 @@
     return extensionContext.storageSet({
       [STORAGE_KEY]: {
         panelOpen: state.panelOpen,
+        panelLayout: state.panelLayout,
         radiusMeters: state.radiusMeters,
         overlay: state.overlay,
         searchSortBy: state.searchSortBy,
@@ -514,6 +573,30 @@
       edge_archive_batch_not_created: "Orbit did not verify the Archive draft",
       edge_settings_batch_not_created: "Orbit did not verify the settings draft",
       edge_annotation_readback_failed: "Orbit annotation read-back failed",
+      action_name_batch_not_created: "Orbit did not verify the unsaved Action renames",
+      action_name_readback_failed: "Orbit could not verify the renamed Actions",
+      action_name_changed: "An Action name changed after preview",
+      action_waypoint_changed: "An Action waypoint changed after preview",
+      action_not_found: "A planned Action is no longer available",
+      duplicate_action_name: "A planned Action name already exists",
+      invalid_action_name_batch: "The Action-name batch is invalid",
+      missing_required_name_segment: "Enter Enterprise, Site, and Area",
+      invalid_action_name_segment:
+        "Naming fields may use 1–32 letters, digits, dots, or underscores",
+      invalid_action_sequence_start:
+        "Starting sequence must be a non-negative integer that fits its width",
+      invalid_action_sequence_width: "Sequence width must be from 1 to 8 digits",
+      invalid_action_first_number:
+        "Enter the starting sequence as 1–8 digits, including any leading zeros",
+      action_sequence_range_overflow: "Action sequence exceeds the selected width",
+      inspection_type_required: "Choose an inspection type for every selected Action",
+      invalid_generated_action_name: "The naming fields produced an invalid Action name",
+      orbit_action_form_unavailable: "Orbit Action draft state is unavailable",
+      duplicate_action_id: "The selected Action batch contains a duplicate ID",
+      no_selected_actions: "Select at least one Action in Action Names",
+      selected_action_not_found: "A selected Action is no longer available",
+      no_selected_waypoints: "Select at least one waypoint in Orbit",
+      selected_waypoint_not_found: "A selected waypoint is no longer in this Site Map",
       native_mutation_in_progress: "Another native mutation is still in progress",
       native_operation_in_progress: "Another native validation is still in progress",
       native_mutation_exception: "Orbit raised an exception during the native edit",
@@ -552,7 +635,7 @@
       [snapshot.waypoints.length, "waypoints"],
       [snapshot.edges.length, "edges"],
       [snapshot.recordingCount, "recordings"],
-      [snapshot.editIndex ?? "—", "draft index"],
+      [snapshot.editIndex ?? "—", "edit revision"],
       [(snapshot.areas || []).length, "Areas"],
       [(snapshot.docks || []).length, "Docks"],
       [(snapshot.fiducials || []).length, "fiducials"],
@@ -890,6 +973,8 @@
 
   function render() {
     root.dataset.open = String(state.panelOpen);
+    root.dataset.panelLayout = state.panelLayout;
+    syncPanelLayout();
     elements.panel.hidden = !state.panelOpen;
     elements.launch.hidden = state.panelOpen;
     elements.search.value = state.query;
@@ -900,6 +985,10 @@
       ? "Descending; click for ascending"
       : "Ascending; click for descending";
     elements.radius.value = String(state.radiusMeters);
+    for (const button of elements.layoutControls.querySelectorAll("[data-panel-layout]")) {
+      button.dataset.active = String(button.dataset.panelLayout === state.panelLayout);
+      button.setAttribute("aria-pressed", button.dataset.active);
+    }
     elements.status.textContent = state.status;
     elements.status.dataset.kind = state.statusKind;
     renderSummary();
@@ -1033,7 +1122,7 @@
     } catch (error) {
       setStatus(
         error.mutationMayExist
-          ? `${friendlyError(error.message)}. An unverified native draft may exist; ` +
+          ? `${friendlyError(error.message)}. Orbit may contain an unverified unsaved change; ` +
             unverifiedMutationGuidance(error)
           : friendlyError(error.message),
         "error",
@@ -1071,9 +1160,7 @@
       );
       if (!response.added) throw new Error("edge_draft_not_created");
       setStatus(
-        `Orbit created one unsaved Connect Undo step ` +
-        `(draft index +${response.draftIndexDelta ?? "?"}). ` +
-        "Review it, then Save or Undo in Orbit.",
+        "Orbit created one unsaved Connect change. Review it, then Save or Undo in Orbit.",
         "ok",
       );
       await refreshSnapshot({ quiet: true, allowBusy: true });
@@ -1081,7 +1168,7 @@
       if (error.mutationMayExist) {
         await refreshSnapshot({ quiet: true, allowBusy: true });
         setStatus(
-          `${friendlyError(error.message)}. An unverified native draft may exist; ` +
+          `${friendlyError(error.message)}. Orbit may contain an unverified unsaved change; ` +
           unverifiedMutationGuidance(error),
           "error",
         );
@@ -1112,17 +1199,32 @@
     return element;
   }
 
-  function recordingColor(recordingId) {
+  function stableStringHash(value) {
     let hash = 2166136261;
-    for (const character of String(recordingId || "")) {
+    for (const character of String(value || "")) {
       hash ^= character.codePointAt(0);
       hash = Math.imul(hash, 16777619);
     }
-    return `hsl(${Math.abs(hash) % 360} 72% 58%)`;
+    return hash;
+  }
+
+  function recordingColor(recordingId) {
+    return `hsl(${Math.abs(stableStringHash(recordingId)) % 360} 72% 58%)`;
+  }
+
+  function actionNameLabelDensity(zoom) {
+    return ACTION_NAME_LABEL_DENSITY_STEPS.find((step) => zoom < step.maxZoom);
   }
 
   function drawOverlay() {
-    if (!state.overlay.detailed || !state.snapshot) {
+    if (!state.snapshot) {
+      elements.overlay.replaceChildren();
+      return;
+    }
+    const advancedOverlay =
+      globalThis.OrbitSiteMapEditorAdvanced?.overlayState?.() || {};
+    const actionNameLabelsVisible = Boolean(advancedOverlay.actionNameLabelsVisible);
+    if (!state.overlay.detailed && !actionNameLabelsVisible) {
       elements.overlay.replaceChildren();
       return;
     }
@@ -1134,8 +1236,6 @@
     const cameraY = Number(params.get("y"));
     const zoom = Number(params.get("zoom"));
     if (![cameraX, cameraY, zoom].every(Number.isFinite) || zoom <= 0) return;
-    const advancedOverlay =
-      globalThis.OrbitSiteMapEditorAdvanced?.overlayState?.() || {};
     const walkOverlay =
       globalThis.OrbitSiteMapEditorWalk?.overlayState?.() || {};
     const advancedOverlayKey = String(advancedOverlay.revision || 0);
@@ -1196,8 +1296,12 @@
     }));
     definitions.append(clip, edgeArrow);
     elements.overlay.append(definitions);
-    const group = svgElement("g", { "clip-path": `url(#${clipId})` });
-    elements.overlay.append(group);
+    const group = svgElement("g", {
+      "clip-path": `url(#${clipId})`,
+      visibility: state.overlay.detailed ? "visible" : "hidden",
+    });
+    const actionNameGroup = svgElement("g", { "clip-path": `url(#${clipId})` });
+    elements.overlay.append(group, actionNameGroup);
     const liveGraph = graph();
     const workWaypointIds = new Set(
       state.overlay.selection ? advancedOverlay.selection?.waypointIds || [] : [],
@@ -1460,6 +1564,61 @@
       drawnWaypoints += 1;
     }
 
+    const actionLabelDensity = actionNameLabelDensity(zoom);
+    const actionLabelCandidatesByCell = new Map();
+    const actionNameLabels = actionNameLabelsVisible
+      ? advancedOverlay.actionNameLabels || []
+      : [];
+    for (const item of actionNameLabels) {
+      const position = item.position;
+      if (!model.finitePosition(position)) continue;
+      const point = project(position);
+      if (!inside(point)) continue;
+      let cellKey = `action:${item.id}`;
+      if (actionLabelDensity.cellWidth) {
+        const cellX = Math.floor((point.x - rect.left) / actionLabelDensity.cellWidth);
+        const cellY = Math.floor((point.y - rect.top) / actionLabelDensity.cellHeight);
+        cellKey = `${cellX}:${cellY}`;
+      }
+      const candidate = {
+        item,
+        point,
+        rank: stableStringHash(item.id) >>> 0,
+      };
+      const existing = actionLabelCandidatesByCell.get(cellKey);
+      if (!existing || candidate.rank < existing.rank) {
+        actionLabelCandidatesByCell.set(cellKey, candidate);
+      }
+    }
+    const actionLabelCandidates = [...actionLabelCandidatesByCell.values()].sort(
+      (left, right) => left.point.y - right.point.y || left.point.x - right.point.x,
+    );
+    for (const { item, point } of actionLabelCandidates) {
+      const displayName = item.name.length > 72
+        ? `${item.name.slice(0, 71)}…`
+        : item.name;
+      const x = point.x + 11;
+      const y = point.y + 13;
+      const width = Math.min(440, Math.max(68, displayName.length * 5.8 + 12));
+      actionNameGroup.append(
+        svgElement("rect", {
+          x: x - 4,
+          y: y - 10,
+          width,
+          height: 14,
+          rx: 3,
+          class: "osme-action-name-label-bg",
+        }),
+      );
+      const label = svgElement("text", {
+        x,
+        y,
+        class: "osme-action-name-label",
+      });
+      label.textContent = displayName;
+      actionNameGroup.append(label);
+    }
+
     let exclusionMarkers = 0;
     for (const waypointId of walkOverlay.excludedWaypointIds || []) {
       if (exclusionMarkers >= MAX_WALK_OVERLAY_MARKERS) break;
@@ -1550,6 +1709,13 @@
     persist();
     render();
   });
+  elements.layoutControls.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-panel-layout]");
+    if (!button) return;
+    state.panelLayout = panelLayout.normalize(button.dataset.panelLayout);
+    persist();
+    render();
+  });
   elements.refresh.addEventListener("click", () => refreshSnapshot());
   elements.search.addEventListener("input", (event) => {
     state.query = event.target.value;
@@ -1626,7 +1792,7 @@
       }).catch((error) => {
         setStatus(
           error.mutationMayExist
-            ? `${friendlyError(error.message)}. An unverified native draft may exist; ` +
+            ? `${friendlyError(error.message)}. Orbit may contain an unverified unsaved change; ` +
               unverifiedMutationGuidance(error)
             : friendlyError(error.message),
           "error",
@@ -1649,6 +1815,12 @@
       if (event.data.sessionId && event.data.sessionId !== instanceId) return;
       state.bridgeReady = true;
       refreshSnapshot();
+      return;
+    }
+    if (event.data.type === ACTION_SELECTION_TYPE) {
+      window.dispatchEvent(new CustomEvent(instanceEvents.actionSelection, {
+        detail: { actionId: String(event.data.actionId || "") },
+      }));
       return;
     }
     if (event.data.type !== RESPONSE_TYPE) return;
@@ -1686,6 +1858,7 @@
       return;
     }
     state.panelOpen = stored.panelOpen !== false;
+    state.panelLayout = panelLayout.normalize(stored.panelLayout);
     if (Number.isFinite(stored.radiusMeters)) {
       state.radiusMeters = Math.min(100, Math.max(0.5, stored.radiusMeters));
     }

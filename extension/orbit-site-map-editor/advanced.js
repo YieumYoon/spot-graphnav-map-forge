@@ -8,6 +8,7 @@
   const extensionContext = globalThis.OrbitSiteMapEditorExtensionContext;
   const workspacePanes = [
     globalThis.OrbitSiteMapEditorSelectWorkspace,
+    globalThis.OrbitSiteMapEditorActionNamesWorkspace,
     globalThis.OrbitSiteMapEditorEditWorkspace,
     globalThis.OrbitSiteMapEditorValidateWorkspace,
   ];
@@ -23,6 +24,7 @@
     !runtime.instanceId ||
     !runtime.disposeEvent ||
     !runtime.instanceEvents?.addSelection ||
+    !runtime.instanceEvents?.actionSelection ||
     !runtime.instanceEvents?.snapshot
   ) return;
   if (runtime.isDisposed?.() || !extensionContext.isActive()) return;
@@ -36,6 +38,12 @@
     findings: [],
     queryResults: [],
     pending: null,
+    actionNamePlan: null,
+    actionNamePlanError: "",
+    actionNameSelections: [],
+    actionNameAddMode: false,
+    actionNameLabelsVisible: true,
+    actionNameOverlayLabels: [],
     copiedSettings: null,
     copiedSettingsName: "",
     presets: [...workflow.BUILTIN_PRESETS],
@@ -49,6 +57,7 @@
   let workspaceLoadGeneration = 0;
   let workspaceLoadingMapId = "";
   let tabSelectionRevision = 0;
+  const actionNameRowsById = new Map();
 
   const root = runtime.elements.panel;
   if (!root || root.dataset.osmeAdvancedInstance === runtime.instanceId) return;
@@ -72,6 +81,7 @@
   for (const [id, label] of [
     ["explore", "Explore"],
     ["select", "Select"],
+    ["action-names", "Action Names"],
     ["edit", "Edit"],
     ["validate", "Validate"],
   ]) {
@@ -142,6 +152,7 @@
     return storageSet({
       [key]: {
         tab: state.tab,
+        actionNameLabelsVisible: state.actionNameLabelsVisible,
         selection: state.selection,
         namedSets: state.namedSets,
         presets: state.presets.filter(
@@ -164,6 +175,10 @@
 
   function selectedEdges() {
     return state.selection.edgeIds.map(edgeBySelectionId).filter(Boolean);
+  }
+
+  function actionById(id) {
+    return (snapshot().actions || []).find((action) => action.id === id);
   }
 
   function applyIncoming(incoming) {
@@ -232,7 +247,11 @@
 
   function setTab(tab, { userInitiated = false } = {}) {
     const changed = state.tab !== tab;
+    if (state.tab === "action-names" && tab !== "action-names") {
+      state.actionNameAddMode = false;
+    }
     state.tab = tab;
+    if (changed) state.overlayRevision += 1;
     if (userInitiated) tabSelectionRevision += 1;
     for (const button of nav.querySelectorAll("[data-tab]")) {
       button.dataset.active = String(button.dataset.tab === tab);
@@ -335,6 +354,237 @@
     }
   }
 
+  function actionNamingOptions() {
+    const sequence = workflow.parseActionSequence(el.action_name_first_number.value);
+    return {
+      enterprise: el.action_name_enterprise.value,
+      site: el.action_name_site.value,
+      area: el.action_name_area.value,
+      workCenter: el.action_name_work_center.value,
+      equipment: el.action_name_equipment.value,
+      startSequence: sequence.startSequence,
+      sequenceWidth: sequence.sequenceWidth,
+    };
+  }
+
+  function isActionAddModeShortcut(event) {
+    return Boolean(
+      event.code === "KeyA" &&
+      !event.ctrlKey &&
+      !event.altKey &&
+      !event.shiftKey &&
+      !event.metaKey &&
+      !event.repeat &&
+      !event.isComposing &&
+      !event.defaultPrevented
+    );
+  }
+
+  function isTextEntryTarget(target) {
+    return Boolean(target?.closest?.(
+      "input, textarea, select, [contenteditable]:not([contenteditable='false'])",
+    ));
+  }
+
+  function toggleActionAddMode() {
+    state.actionNameAddMode = !state.actionNameAddMode;
+    renderActionNamePicker();
+    message(state.actionNameAddMode ? "Add Actions mode enabled." : "Normal mode enabled.");
+  }
+
+  function updateActionNamePlan() {
+    state.actionNamePlan = null;
+    state.actionNamePlanError = "";
+    if (!state.actionNameSelections.length) return;
+    try {
+      state.actionNamePlan = workflow.planSelectedActionNames(
+        snapshot(),
+        state.actionNameSelections,
+        actionNamingOptions(),
+      );
+    } catch (error) {
+      state.actionNamePlanError = runtime.friendlyError(error.message);
+    }
+  }
+
+  function createActionNameRow(id) {
+    const row = create("div", "osme-action-choice");
+    row.dataset.actionNameRowId = id;
+    const indexLabel = create("strong");
+    const name = create("span");
+    const type = create("select", "osme-field osme-action-name-type");
+    type.dataset.actionNameTypeId = id;
+    const choose = create("option", "", "Choose type");
+    choose.value = "";
+    type.append(choose);
+    for (const value of workflow.ACTION_NAME_SUFFIXES) {
+      const option = create("option", "", value);
+      option.value = value;
+      type.append(option);
+    }
+    const remove = create("button", "osme-icon-button", "×");
+    remove.type = "button";
+    remove.dataset.actionNameRemoveId = id;
+    row.append(indexLabel, name, type, remove);
+    return { row, indexLabel, name, type, remove };
+  }
+
+  function renderActionNamePicker() {
+    const liveSnapshot = snapshot();
+    const actions = liveSnapshot.actions || [];
+    const selections = state.actionNameSelections.map((selection) => ({
+      ...selection,
+      action: actionById(selection.id),
+    }));
+    const current = actionById(liveSnapshot.currentActionId);
+    state.actionNameOverlayLabels = workflow.actionNameOverlayLabels(actions);
+    el.action_name_shortcut.textContent = "Shortcut: A";
+    el.action_name_label_toggle.checked = state.actionNameLabelsVisible;
+    el.action_name_label_status.textContent = state.actionNameLabelsVisible
+      ? `${state.actionNameOverlayLabels.length} of ${actions.length} Actions have map positions.`
+      : "Action name projection is off.";
+    for (const button of el.action_name_mode.querySelectorAll(
+      "[data-action-name-add-mode]",
+    )) {
+      const active = String(state.actionNameAddMode) === button.dataset.actionNameAddMode;
+      button.dataset.active = String(active);
+      button.setAttribute("aria-pressed", String(active));
+    }
+    el.action_name_map_selection_status.replaceChildren(
+      create(
+        "small",
+        "",
+        state.actionNameAddMode
+          ? "Add Actions mode — map clicks append Actions in sequence order."
+          : "Normal mode — map clicks do not change this list.",
+      ),
+      ...(current
+        ? [create("small", "", `Current Action: ${current.name || runtime.model.shortId(current.id)}`)]
+        : []),
+    );
+    el.action_name_selection_summary.replaceChildren(
+      create(
+        "p",
+        state.actionNameSelections.length ? "osme-ok-text" : "osme-empty",
+        `${state.actionNameSelections.length} selected`,
+      ),
+    );
+    const selectedIds = new Set();
+    let cursor = el.action_name_action_list.firstElementChild;
+    for (const [index, selection] of selections.entries()) {
+      selectedIds.add(selection.id);
+      let entry = actionNameRowsById.get(selection.id);
+      if (!entry) {
+        entry = createActionNameRow(selection.id);
+        actionNameRowsById.set(selection.id, entry);
+      }
+      entry.indexLabel.textContent = `#${index + 1}`;
+      entry.name.textContent = selection.action?.name || "Unavailable Action";
+      entry.type.setAttribute("aria-label", `Inspection type for Action ${index + 1}`);
+      entry.remove.setAttribute("aria-label", `Remove Action ${index + 1}`);
+      if (document.activeElement !== entry.type && entry.type.value !== selection.type) {
+        entry.type.value = selection.type;
+      }
+      if (entry.row !== cursor) {
+        el.action_name_action_list.insertBefore(entry.row, cursor);
+      }
+      cursor = entry.row.nextElementSibling;
+    }
+    for (const [id, entry] of actionNameRowsById) {
+      if (selectedIds.has(id)) continue;
+      entry.row.remove();
+      actionNameRowsById.delete(id);
+    }
+    if (!selections.length) {
+      let empty = el.action_name_action_list.querySelector(":scope > .osme-empty");
+      if (!empty) {
+        empty = create("p", "osme-empty", "No Actions selected.");
+        el.action_name_action_list.append(empty);
+      }
+    } else {
+      el.action_name_action_list.querySelector(":scope > .osme-empty")?.remove();
+    }
+  }
+
+  function captureMapActionSelection(actionId = snapshot().currentActionId) {
+    if (!state.actionNameAddMode || state.tab !== "action-names") return false;
+    const next = workflow.appendMapSelectedAction(
+      state.actionNameSelections,
+      actionId,
+      snapshot().actions,
+    );
+    if (next.length === state.actionNameSelections.length) return false;
+    state.actionNameSelections = next;
+    state.overlayRevision += 1;
+    setPending(null);
+    updateActionNamePlan();
+    return true;
+  }
+
+  function renderActionNamePlan() {
+    const plan = state.actionNamePlan;
+    el.action_name_summary.replaceChildren();
+    el.action_name_preview.replaceChildren();
+    el.review_action_names.disabled = true;
+    if (state.actionNamePlanError) {
+      el.action_name_summary.append(
+        create("p", "osme-warning-text", state.actionNamePlanError),
+      );
+      return;
+    }
+    if (!plan) {
+      el.action_name_summary.append(
+        create("p", "osme-empty", "Select Actions to build the preview."),
+      );
+      return;
+    }
+    const issues = plan.unsupported.length + plan.conflicts.length;
+    el.action_name_summary.append(
+      create(
+        "p",
+        issues ? "osme-warning-text" : "osme-ok-text",
+        `${plan.selectedActionIds.length} selected · ${plan.updates.length} to rename · ` +
+          `${plan.unchanged.length} unchanged · ${issues} issue${issues === 1 ? "" : "s"}`,
+      ),
+    );
+    for (const item of plan.items.slice(0, 200)) {
+      const row = create("div", "osme-list-row osme-action-name-row");
+      const names = create("div");
+      names.append(
+        create("small", "", item.observedName || "(unnamed)"),
+        create("code", "", item.desiredName),
+      );
+      row.append(create("strong", "", item.sequence), names);
+      el.action_name_preview.append(row);
+    }
+    if (plan.items.length > 200) {
+      el.action_name_preview.append(
+        create("small", "", `+${plan.items.length - 200} more`),
+      );
+    }
+    for (const item of plan.unsupported.slice(0, 30)) {
+      el.action_name_preview.append(
+        create(
+          "div",
+          "osme-list-row osme-warning-text",
+          item.reason === "inspection_type_required"
+            ? `Choose an inspection type: ${item.observedName || "Unnamed Action"}`
+            : `Action waypoint unavailable: ${item.observedName || "Unnamed Action"}`,
+        ),
+      );
+    }
+    if (plan.conflicts.length) {
+      el.action_name_preview.append(
+        create(
+          "div",
+          "osme-list-row osme-error",
+          `${plan.conflicts.length} name collision${plan.conflicts.length === 1 ? "" : "s"}.`,
+        ),
+      );
+    }
+    el.review_action_names.disabled = !plan.canApply;
+  }
+
   function setPending(pending) {
     state.pending = pending;
     renderMutation();
@@ -343,15 +593,45 @@
   function renderMutation() {
     const mutationLocked = Boolean(runtime.state.mutationUncertain);
     el.confirm_mutation.disabled = mutationLocked;
-    el.mutation_review.hidden = !state.pending;
+    el.confirm_action_name_mutation.disabled = mutationLocked;
+    const actionMutation = state.pending?.type === "rename_actions";
+    el.mutation_review.hidden = !state.pending || actionMutation;
+    el.action_name_mutation_review.hidden = !actionMutation;
     el.mutation_detail.replaceChildren();
+    el.action_name_mutation_detail.replaceChildren();
     if (!state.pending) return;
-    el.mutation_title.textContent = state.pending.title;
-    el.mutation_detail.append(
+    const title = actionMutation
+      ? el.action_name_mutation_title
+      : el.mutation_title;
+    const detail = actionMutation
+      ? el.action_name_mutation_detail
+      : el.mutation_detail;
+    title.textContent = state.pending.title;
+    detail.append(
       create("p", "", state.pending.detail),
       create("code", "", `Site Map ${snapshot().map.id}`),
-      create("small", "", `Observed draft index ${snapshot().editIndex ?? "—"}`),
+      ...(state.pending.type === "rename_actions"
+        ? []
+        : [create("small", "", `Observed edit revision ${snapshot().editIndex ?? "—"}`)]),
     );
+  }
+
+  function reviewActionNames() {
+    updateActionNamePlan();
+    const plan = state.actionNamePlan;
+    renderActionNamePlan();
+    if (!plan?.canApply) {
+      message(state.actionNamePlanError || "Fix the listed issues first.", "warning");
+      return;
+    }
+    setPending({
+      type: "rename_actions",
+      title: `Rename ${plan.updates.length} selected Action${plan.updates.length === 1 ? "" : "s"}?`,
+      detail: "Orbit will keep the renames unsaved so they can be reviewed or undone.",
+      actionNameUpdates: plan.updates,
+      actionNameSelections: plan.selections,
+      observedActionEditIndex: snapshot().actionEditIndex,
+    });
   }
 
   function previewArchive(edges = selectedEdges()) {
@@ -363,7 +643,7 @@
       type: "archive",
       title: `Archive ${edges.length} exact edge${edges.length === 1 ? "" : "s"}?`,
       detail:
-        "Orbit will create one unsaved batch Archive draft. Review the highlighted selection first.",
+        "Orbit will create one unsaved Archive change. Review the highlighted selection first.",
       edges,
       observedEditIndex: snapshot().editIndex,
     });
@@ -383,7 +663,7 @@
       title: `Update settings on ${edges.length} exact edge${edges.length === 1 ? "" : "s"}?`,
       detail:
         `Fields: ${Object.keys(settings).join(", ") || "default"}. ` +
-        "Orbit will create one unsaved native settings draft.",
+        "Orbit will create one unsaved settings change.",
       desiredByEdge,
       observedEditIndex: snapshot().editIndex,
     });
@@ -403,7 +683,7 @@
     setPending({
       type: "connect",
       title: "Connect this exact waypoint pair?",
-      detail: `${from} ↔ ${to}. Orbit validation runs before one unsaved draft is created.`,
+      detail: `${from} ↔ ${to}. Orbit validates the pair before creating an unsaved change.`,
       pair,
       queueIndex,
       observedEditIndex: snapshot().editIndex,
@@ -415,24 +695,32 @@
     if (!pending) return;
     if (runtime.state.mutationUncertain) {
       message(
-        "A previous native edit is still unverified. Inspect or restore Orbit, then clear the lock in Edit before another edit.",
+        "A previous edit is still unverified. Inspect or restore Orbit, then clear the lock in Edit before another edit.",
         "error",
       );
       renderAdvanced();
       return;
     }
-    if (
-      pending.observedEditIndex !== snapshot().editIndex ||
-      snapshot().map.id !== runtime.currentMapId()
-    ) {
-      message("Live Site Map or draft index changed; review the operation again.", "error");
+    const actionSelectionChanged = pending.type === "rename_actions" &&
+      JSON.stringify(pending.actionNameSelections) !==
+        JSON.stringify(state.actionNameSelections);
+    const draftChanged = pending.type === "rename_actions"
+      ? pending.observedActionEditIndex !== snapshot().actionEditIndex
+      : pending.observedEditIndex !== snapshot().editIndex;
+    if (draftChanged || actionSelectionChanged || snapshot().map.id !== runtime.currentMapId()) {
+      message("The Site Map or unsaved edit state changed; review the operation again.", "error");
       setPending(null);
       return;
     }
     el.confirm_mutation.disabled = true;
+    el.confirm_action_name_mutation.disabled = true;
     try {
       let response;
-      if (pending.type === "archive") {
+      if (pending.type === "rename_actions") {
+        response = await runtime.requestBridge("rename_actions", {
+          actionNameUpdates: pending.actionNameUpdates,
+        }, 18000);
+      } else if (pending.type === "archive") {
         response = await runtime.requestBridge("archive_edges", {
           waypointPairs: pending.edges.map((edge) => [edge.from, edge.to]),
         }, 18000);
@@ -456,12 +744,19 @@
         }
       }
       message(
-        `Orbit created one unsaved ${pending.type} Undo step ` +
-        `(draft index +${response.draftIndexDelta ?? "?"}). ` +
-        "Review it, then use Orbit Save or one Undo.",
+        pending.type === "rename_actions"
+          ? "Renames applied as one unsaved Orbit change. Review them, then Save or Undo in Orbit."
+          : `Orbit created one unsaved ${pending.type} change. ` +
+            "Review it, then use Orbit Save or one Undo.",
         "ok",
       );
       state.pending = null;
+      if (pending.type === "rename_actions") {
+        state.actionNameSelections = [];
+        state.actionNamePlan = null;
+        state.actionNamePlanError = "";
+        state.actionNameAddMode = false;
+      }
       await runtime.refreshSnapshot({ quiet: true, allowBusy: true });
     } catch (error) {
       if (error.mutationMayExist) {
@@ -471,7 +766,7 @@
         state.pending = null;
         await runtime.refreshSnapshot({ quiet: true, allowBusy: true });
         message(
-          `${runtime.friendlyError(error.message)}. An unverified native draft may exist; ` +
+          `${runtime.friendlyError(error.message)}. Orbit may contain an unverified unsaved change; ` +
           runtime.unverifiedMutationGuidance(error),
           "error",
         );
@@ -602,14 +897,14 @@
     const context = uncertain.mutationContext || {};
     const warning = create("div", "osme-card osme-error");
     warning.append(
-      create("strong", "", "Native edit result is unverified"),
+      create("strong", "", "Edit result is unverified"),
       create(
         "p",
         "",
         `${uncertain.command || "edit"} · Draft index ` +
         `${context.beforeEditIndex ?? "?"}→${context.afterEditIndex ?? "?"} · ` +
         `Undo depth ${context.beforeUndoDepth ?? "?"}→${context.afterUndoDepth ?? "?"} · ` +
-        `${context.targetKeys?.length || 0} target(s)`,
+        `${context.targetKeys?.length || 0} targets`,
       ),
       create(
         "small",
@@ -629,8 +924,11 @@
 
   function renderAdvanced() {
     state.overlayRevision += 1;
+    updateActionNamePlan();
     renderSelection();
     renderQuery();
+    renderActionNamePicker();
+    renderActionNamePlan();
     renderPresets();
     renderMutation();
     renderQueue();
@@ -644,7 +942,10 @@
 
   nav.addEventListener("click", (event) => {
     const button = event.target.closest("[data-tab]");
-    if (button) setTab(button.dataset.tab, { userInitiated: true });
+    if (!button) return;
+    const tab = button.dataset.tab;
+    setTab(tab, { userInitiated: true });
+    if (tab === "action-names") renderActionNamePicker();
   });
   el.selection_mode.addEventListener("change", () => {
     state.selectionMode = el.selection_mode.value;
@@ -764,6 +1065,57 @@
     renderAdvanced();
   });
   el.preview_archive.addEventListener("click", () => previewArchive());
+  el.action_name_mode.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-action-name-add-mode]");
+    if (!button) return;
+    const requestedMode = button.dataset.actionNameAddMode === "true";
+    if (state.actionNameAddMode !== requestedMode) toggleActionAddMode();
+  });
+  el.action_name_builder.addEventListener("input", () => {
+    setPending(null);
+    updateActionNamePlan();
+    renderActionNamePlan();
+  });
+  el.action_name_label_toggle.addEventListener("change", () => {
+    state.actionNameLabelsVisible = el.action_name_label_toggle.checked;
+    state.overlayRevision += 1;
+    persist();
+    renderActionNamePicker();
+  });
+  el.action_name_action_list.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-action-name-remove-id]");
+    if (!button) return;
+    const id = button.dataset.actionNameRemoveId;
+    state.actionNameSelections = state.actionNameSelections
+      .filter((selection) => selection.id !== id);
+    state.overlayRevision += 1;
+    setPending(null);
+    updateActionNamePlan();
+    renderActionNamePicker();
+    renderActionNamePlan();
+  });
+  el.action_name_action_list.addEventListener("change", (event) => {
+    const selectElement = event.target.closest("select[data-action-name-type-id]");
+    if (!selectElement) return;
+    const selection = state.actionNameSelections.find(
+      (item) => item.id === selectElement.dataset.actionNameTypeId,
+    );
+    if (!selection) return;
+    selection.type = selectElement.value;
+    setPending(null);
+    updateActionNamePlan();
+    renderActionNamePlan();
+  });
+  el.action_name_clear_selection.addEventListener("click", () => {
+    state.actionNameSelections = [];
+    state.overlayRevision += 1;
+    state.actionNamePlan = null;
+    state.actionNamePlanError = "";
+    setPending(null);
+    renderActionNamePicker();
+    renderActionNamePlan();
+  });
+  el.review_action_names.addEventListener("click", reviewActionNames);
   el.copy_settings.addEventListener("click", () => {
     const edges = selectedEdges();
     if (edges.length !== 1) {
@@ -818,6 +1170,8 @@
   });
   el.cancel_mutation.addEventListener("click", () => setPending(null));
   el.confirm_mutation.addEventListener("click", executePending);
+  el.cancel_action_name_mutation.addEventListener("click", () => setPending(null));
+  el.confirm_action_name_mutation.addEventListener("click", executePending);
   el.parse_queue.addEventListener("click", () => {
     try {
       state.connectQueue = workflow.parseConnectQueue(el.queue_source.value);
@@ -856,7 +1210,7 @@
           : `rejected: ${error.message}`;
         message(
           error.mutationMayExist
-            ? `${runtime.friendlyError(error.message)}. An unverified native draft may exist; ` +
+            ? `${runtime.friendlyError(error.message)}. Orbit may contain an unverified unsaved change; ` +
               runtime.unverifiedMutationGuidance(error)
             : runtime.friendlyError(error.message),
           "error",
@@ -934,6 +1288,22 @@
   window.addEventListener(runtime.instanceEvents.mutationUncertain, () => {
     renderAdvanced();
   }, { signal: lifecycleSignal });
+  window.addEventListener(runtime.instanceEvents.actionSelection, (event) => {
+    if (!event.detail?.actionId || !captureMapActionSelection(event.detail.actionId)) return;
+    renderActionNamePicker();
+    renderActionNamePlan();
+  }, { signal: lifecycleSignal });
+  window.addEventListener("keydown", (event) => {
+    if (
+      state.tab !== "action-names" ||
+      !runtime.state.panelOpen ||
+      isTextEntryTarget(event.target) ||
+      !isActionAddModeShortcut(event)
+    ) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    toggleActionAddMode();
+  }, { capture: true, signal: lifecycleSignal });
   window.addEventListener(runtime.instanceEvents.snapshot, (event) => {
     const liveMapId = String(event.detail?.mapId || snapshot().map.id || "");
     if (liveMapId && liveMapId !== state.workspaceMapId) {
@@ -945,20 +1315,29 @@
   }, { signal: lifecycleSignal });
 
   globalThis.OrbitSiteMapEditorAdvanced = Object.freeze({
-    overlayState: () => ({
-      revision: state.overlayRevision,
-      selection: state.selection,
-      findingWaypointIds: [...new Set(
-        state.findings
-          .filter((item) => item.severity !== "info")
-          .flatMap((item) => item.waypointIds),
-      )],
-      findingEdgeIds: [...new Set(
-        state.findings
-          .filter((item) => item.severity !== "info")
-          .flatMap((item) => item.edgeIds),
-      )],
-    }),
+    overlayState: () => {
+      const actionNameLabelsVisible = Boolean(
+        state.tab === "action-names" &&
+        runtime.state.panelOpen &&
+        state.actionNameLabelsVisible
+      );
+      return {
+        revision: state.overlayRevision,
+        actionNameLabels: actionNameLabelsVisible ? state.actionNameOverlayLabels : [],
+        actionNameLabelsVisible,
+        selection: state.selection,
+        findingWaypointIds: [...new Set(
+          state.findings
+            .filter((item) => item.severity !== "info")
+            .flatMap((item) => item.waypointIds),
+        )],
+        findingEdgeIds: [...new Set(
+          state.findings
+            .filter((item) => item.severity !== "info")
+            .flatMap((item) => item.edgeIds),
+        )],
+      };
+    },
   });
 
   function resetWorkspaceState() {
@@ -969,6 +1348,12 @@
     state.findings = [];
     state.queryResults = [];
     state.pending = null;
+    state.actionNamePlan = null;
+    state.actionNamePlanError = "";
+    state.actionNameSelections = [];
+    state.actionNameAddMode = false;
+    state.actionNameLabelsVisible = true;
+    state.actionNameOverlayLabels = [];
     state.copiedSettings = null;
     state.copiedSettingsName = "";
     state.presets = [...workflow.BUILTIN_PRESETS];
@@ -1007,7 +1392,14 @@
         : "";
     resetWorkspaceState();
     state.workspaceMapId = normalizedMapId;
-    const validTabs = ["explore", "select", "edit", "validate", "walk"];
+    const validTabs = [
+      "explore",
+      "select",
+      "action-names",
+      "edit",
+      "validate",
+      "walk",
+    ];
     const preserveSelectedTab = validTabs.includes(tabSelectedWhileLoading);
     state.tab = preserveSelectedTab
       ? tabSelectedWhileLoading
@@ -1015,6 +1407,7 @@
         ? stored.tab
         : "explore";
     state.selection = select.normalize(stored.selection);
+    state.actionNameLabelsVisible = stored.actionNameLabelsVisible !== false;
     state.namedSets = Array.isArray(stored.namedSets)
       ? stored.namedSets
           .map((item) => {

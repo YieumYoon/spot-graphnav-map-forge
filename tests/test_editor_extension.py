@@ -14,7 +14,8 @@ def test_editor_extension_manifest_is_independent_and_minimal() -> None:
 
     assert manifest["manifest_version"] == 3
     assert manifest["name"] == "Orbit Site Map Editor"
-    assert "version_name" not in manifest
+    if "version_name" in manifest:
+        assert manifest["version_name"].startswith(f"{manifest['version']} dev ")
     assert manifest["permissions"] == ["storage"]
     assert "host_permissions" not in manifest
     assert "background" not in manifest
@@ -28,8 +29,10 @@ def test_editor_extension_manifest_is_independent_and_minimal() -> None:
     script_order = {name: index for index, name in enumerate(content_script["js"])}
     for dependency in ("extension-context.js", "model.js", "query.js"):
         assert script_order[dependency] < script_order["content.js"]
+    assert script_order["panel-layout.js"] < script_order["content.js"]
     for consumer in (
         "workspace-select.js",
+        "workspace-action-names.js",
         "workspace-edit.js",
         "workspace-validate.js",
         "advanced.js",
@@ -56,10 +59,12 @@ def test_workspace_templates_own_complete_non_overlapping_selectors() -> None:
     script = textwrap.dedent(
         """
         require("./extension/orbit-site-map-editor/workspace-select.js");
+        require("./extension/orbit-site-map-editor/workspace-action-names.js");
         require("./extension/orbit-site-map-editor/workspace-edit.js");
         require("./extension/orbit-site-map-editor/workspace-validate.js");
         const panes = [
           OrbitSiteMapEditorSelectWorkspace,
+          OrbitSiteMapEditorActionNamesWorkspace,
           OrbitSiteMapEditorEditWorkspace,
           OrbitSiteMapEditorValidateWorkspace,
         ];
@@ -88,6 +93,155 @@ def test_workspace_templates_own_complete_non_overlapping_selectors() -> None:
 
     assert result["complete"] is True
     assert result["selectorCount"] == result["uniqueSelectorCount"]
+
+    action_markup = subprocess.run(
+        [
+            node,
+            "-e",
+            "require('./extension/orbit-site-map-editor/workspace-action-names.js');"
+            "process.stdout.write(OrbitSiteMapEditorActionNamesWorkspace.render());",
+        ],
+        cwd=Path.cwd(),
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    edit_markup = subprocess.run(
+        [
+            node,
+            "-e",
+            "require('./extension/orbit-site-map-editor/workspace-edit.js');"
+            "process.stdout.write(OrbitSiteMapEditorEditWorkspace.render());",
+        ],
+        cwd=Path.cwd(),
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert 'data-workspace-tab="action-names"' in action_markup
+    assert 'class="osme-section osme-advanced-pane"' in action_markup
+    assert "osme-action-name-map-selection-status" in action_markup
+    assert "osme-action-name-mode" in action_markup
+    assert "osme-action-name-shortcut" in action_markup
+    assert "osme-action-name-label-toggle" in action_markup
+    assert "Show Action names on map" in action_markup
+    assert 'data-action-name-add-mode="false"' in action_markup
+    assert 'data-action-name-add-mode="true"' in action_markup
+    assert "osme-action-name-clear-selection" in action_markup
+    assert "osme-action-name-action-list" in action_markup
+    assert "osme-action-name-enterprise" in action_markup
+    assert "osme-action-name-site" in action_markup
+    assert "osme-action-name-area" in action_markup
+    assert "osme-action-name-first-number" in action_markup
+    for placeholder in (
+        "ENTERPRISE_CODE",
+        "SITE_CODE",
+        "AREA_CODE",
+        "WORK_CENTER_CODE",
+        "EQUIPMENT_CODE",
+    ):
+        assert f'placeholder="{placeholder}"' in action_markup
+    assert "osme-action-name-preview" in action_markup
+    assert "osme-review-action-names" in action_markup
+    assert "osme-confirm-action-name-mutation" in action_markup
+    assert "osme-action-name-template" not in action_markup
+    assert "osme-action-name-template" not in edit_markup
+    advanced = (EXTENSION / "advanced.js").read_text(encoding="utf-8")
+    assert 'action_name_builder.addEventListener("input"' in advanced
+    assert "instanceEvents.actionSelection" in advanced
+    assert "stored.actionNameSelections" not in advanced
+    assert "captureCurrentActionOnNextSnapshot" not in advanced
+    assert "actionNameRowsById" in advanced
+    assert "action_name_action_list.replaceChildren" not in advanced
+    assert "document.activeElement !== entry.type" in advanced
+    assert "state.actionNameLabelsVisible = stored.actionNameLabelsVisible !== false" in advanced
+    assert 'if (!state.actionNameAddMode || state.tab !== "action-names") return false;' in advanced
+    assert 'event.code === "KeyA"' in advanced
+    assert "!event.ctrlKey" in advanced
+    assert "!event.altKey" in advanced
+    assert "!event.shiftKey" in advanced
+    assert "!event.metaKey" in advanced
+    assert "isTextEntryTarget(event.target)" in advanced
+    assert 'window.addEventListener("keydown"' in advanced
+    content = (EXTENSION / "content.js").read_text(encoding="utf-8")
+    assert "actionNameLabelsVisible" in content
+    assert 'visibility: state.overlay.detailed ? "visible" : "hidden"' in content
+    assert "ACTION_NAME_LABEL_DENSITY_STEPS" in content
+    assert "maxZoom: 1.2, cellWidth: 72, cellHeight: 22" in content
+    assert "maxZoom: Infinity, cellWidth: 0, cellHeight: 0" in content
+    assert "actionNameLabelDensity(zoom)" in content
+    assert "actionLabelCandidatesByCell" in content
+    assert "const actionNameLabels = actionNameLabelsVisible" in content
+
+
+def test_page_bridge_publishes_action_route_changes_and_restores_history() -> None:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for JavaScript bridge tests")
+    script = textwrap.dedent(
+        """
+        const listeners = new Map();
+        const posts = [];
+        global.window = global;
+        global.location = {
+          origin: "https://orbit.example",
+          pathname: "/control_room/maps/map/edit",
+          search: "",
+        };
+        function updateLocation(url) {
+          const next = new URL(url, `${location.origin}${location.pathname}${location.search}`);
+          location.pathname = next.pathname;
+          location.search = next.search;
+        }
+        const originalPushState = function(_state, _unused, url) {
+          updateLocation(url);
+        };
+        global.history = {
+          pushState: originalPushState,
+          replaceState(_state, _unused, url) { updateLocation(url); },
+        };
+        global.document = {
+          currentScript: {dataset: {osmeSession: "session-1"}},
+          getElementById() { return null; },
+        };
+        window.addEventListener = (type, listener) => {
+          const bucket = listeners.get(type) || [];
+          bucket.push(listener);
+          listeners.set(type, bucket);
+        };
+        window.removeEventListener = (type, listener) => {
+          listeners.set(type, (listeners.get(type) || []).filter((item) => item !== listener));
+        };
+        window.postMessage = (payload) => posts.push(payload);
+        require("./extension/orbit-site-map-editor/page-bridge.js");
+        history.pushState({}, "", "?action=action-a");
+        history.replaceState({}, "", "?action=action-b");
+        setImmediate(() => {
+          const actionPosts = posts.filter(
+            (item) => item.type === "orbit-site-map-editor-action-selection"
+          );
+          global.__orbitSiteMapEditorBridgeV2.dispose();
+          const restored = history.pushState === originalPushState;
+          history.pushState({}, "", "?action=action-c");
+          setImmediate(() => process.stdout.write(JSON.stringify({actionPosts, restored})));
+        });
+        """
+    )
+    completed = subprocess.run(
+        [node, "--unhandled-rejections=strict", "-e", script],
+        cwd=Path.cwd(),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    result = json.loads(completed.stdout)
+
+    assert result["restored"] is True
+    assert [item["actionId"] for item in result["actionPosts"]] == [
+        "action-a",
+        "action-b",
+    ]
+    assert result["actionPosts"][0]["sessionId"] == "session-1"
 
 
 def test_extension_context_fails_closed_after_unpacked_extension_reload() -> None:
@@ -300,6 +454,62 @@ def run_model(script: str) -> dict:
         text=True,
     )
     return json.loads(completed.stdout)
+
+
+def test_panel_layout_reserves_and_releases_a_separate_orbit_rail() -> None:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for JavaScript panel-layout tests")
+    script = textwrap.dedent(
+        """
+        require("./extension/orbit-site-map-editor/panel-layout.js");
+        const layout = OrbitSiteMapEditorPanelLayout;
+        const attributes = new Map();
+        const host = {
+          setAttribute(name, value) {attributes.set(name, value);},
+          removeAttribute(name) {attributes.delete(name);},
+        };
+        const results = [];
+        results.push(layout.apply(host, "rail-left", true));
+        results.push(attributes.get(layout.HOST_ATTRIBUTE));
+        results.push(layout.apply(host, "rail-right", true));
+        results.push(attributes.get(layout.HOST_ATTRIBUTE));
+        results.push(layout.apply(host, "float", true));
+        results.push(attributes.has(layout.HOST_ATTRIBUTE));
+        results.push(layout.apply(host, "rail-left", false));
+        results.push(attributes.has(layout.HOST_ATTRIBUTE));
+        results.push(layout.normalize("unknown"));
+        process.stdout.write(JSON.stringify(results));
+        """
+    )
+    completed = subprocess.run(
+        [node, "-e", script],
+        cwd=Path.cwd(),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert json.loads(completed.stdout) == [
+        "left",
+        "left",
+        "right",
+        "right",
+        "",
+        False,
+        "",
+        False,
+        "rail-right",
+    ]
+    content = (EXTENSION / "content.js").read_text(encoding="utf-8")
+    css = (EXTENSION / "panel.css").read_text(encoding="utf-8")
+    assert 'data-panel-layout="rail-left"' in content
+    assert 'data-panel-layout="float"' in content
+    assert 'data-panel-layout="rail-right"' in content
+    assert "panelLayout: state.panelLayout" in content
+    assert "state.panelLayout = panelLayout.normalize(stored.panelLayout)" in content
+    assert 'html[data-osme-editor-rail="left"] body #root' in css
+    assert 'html[data-osme-editor-rail="right"] body #root' in css
 
 
 def run_editor_modules(script: str) -> dict:
@@ -579,6 +789,178 @@ def test_connect_queue_presets_and_setting_guards() -> None:
     assert {"stairs", "avoid-alternate", "high-cost", "flat-ground"}.issubset(result["builtins"])
 
 
+def test_action_name_plan_suggests_types_and_uses_optional_segments() -> None:
+    result = run_editor_modules(
+        textwrap.dedent(
+            """
+            const workflow = OrbitSiteMapEditorWorkflow;
+            const snapshot = {
+              waypoints: [{id: "w1"}, {id: "w2"}, {id: "w3"}],
+              actions: [
+                {id: "thermal", name: "Existing-0007-THRM", waypointIds: ["w2"]},
+                {id: "leak", name: "Acoustic Leak Inspection - 8", waypointIds: ["w2"]},
+                {id: "visual", name: "Spot Cam - PTZ - 9", waypointIds: ["w1"]},
+              ],
+            };
+            const options = {
+              enterprise: "3916",
+              site: "site1",
+              area: "area1",
+              workCenter: "wc02",
+              equipment: "eq134",
+              startSequence: 42,
+              sequenceWidth: 4,
+            };
+            const selections = [
+              {id: "leak", type: "LEAK"},
+              {id: "visual", type: "AIVI"},
+              {id: "thermal", type: "THRM"},
+            ];
+            const mapSelections = [
+              workflow.appendMapSelectedAction([], "leak", snapshot.actions),
+              workflow.appendMapSelectedAction(
+                [{id: "leak", type: "LEAK"}], "thermal", snapshot.actions
+              ),
+              workflow.appendMapSelectedAction(
+                [{id: "leak", type: "LEAK"}], "leak", snapshot.actions
+              ),
+              workflow.appendMapSelectedAction(
+                [{id: "leak", type: "LEAK"}], "missing", snapshot.actions
+              ),
+            ];
+            const plan = workflow.planSelectedActionNames(
+              snapshot, selections, options
+            );
+            const seed = workflow.parseActionSequence("0042");
+            const optionalPlan = workflow.planSelectedActionNames(
+              snapshot,
+              [{id: "leak", type: "MECQ"}],
+              {
+                enterprise: "3916",
+                site: "BGN1",
+                area: "ADBM",
+                workCenter: "",
+                equipment: "",
+                startSequence: 1,
+                sequenceWidth: 4,
+              },
+            );
+            const blockedSnapshot = {
+              ...snapshot,
+              actions: [
+                ...snapshot.actions,
+                {id: "unknown", name: "Operator note", waypointIds: ["w3"]},
+              ],
+            };
+            const blocked = workflow.planSelectedActionNames(
+              blockedSnapshot, [{id: "unknown", type: ""}], options
+            );
+            let missingRequired = "";
+            try {
+              workflow.planSelectedActionNames(snapshot, selections, {
+                ...options, enterprise: "",
+              });
+            } catch (error) { missingRequired = error.message; }
+            let overflow = "";
+            try {
+              workflow.planSelectedActionNames(snapshot, selections, {
+                ...options,
+                startSequence: 99,
+                sequenceWidth: 2,
+              });
+            } catch (error) { overflow = error.message; }
+            process.stdout.write(JSON.stringify({
+              plan,
+              seed,
+              optionalPlan,
+              mapSelections,
+              blocked,
+              missingRequired,
+              overflow,
+              explicitTypes: [
+                workflow.explicitInspectionType("Existing-0007-THRM"),
+                workflow.explicitInspectionType("Thermal Inspection"),
+                workflow.explicitInspectionType("Existing-0008-AIVI (AI)"),
+              ],
+              suggestedTypes: [
+                workflow.suggestInspectionType("Thermal Inspection - 1"),
+                workflow.suggestInspectionType("Acoustic Mechanical Inspection - 2"),
+                workflow.suggestInspectionType("Acoustic Leak Inspection - 3"),
+                workflow.suggestInspectionType("Spot Cam - PTZ - 4"),
+                workflow.suggestInspectionType({name: "Inspection", type: "infrared"}),
+                workflow.suggestInspectionType("Operator note"),
+              ],
+              overlayLabels: workflow.actionNameOverlayLabels([
+                  {
+                    id: "leak", name: "Acoustic Leak Inspection - 8",
+                    waypointIds: ["w2"], position: {x: 12, y: 4},
+                  },
+                  {
+                    id: "thermal", name: "Existing-0007-THRM",
+                    waypointIds: ["w2"], position: {x: 12, y: 7},
+                  },
+                  {
+                    id: "waypoint-only", name: "No Action position",
+                    waypointIds: ["w2"],
+                  },
+                ],
+              ),
+            }));
+            """
+        )
+    )
+
+    assert result["plan"]["canApply"] is True
+    assert result["seed"] == {
+        "formatted": "0042",
+        "startSequence": 42,
+        "sequenceWidth": 4,
+    }
+    assert result["plan"]["selectedActionIds"] == ["leak", "visual", "thermal"]
+    assert result["optionalPlan"]["updates"][0]["desiredName"] == ("3916-BGN1-ADBM-0001-MECQ")
+    assert result["mapSelections"] == [
+        [{"id": "leak", "type": "LEAK"}],
+        [{"id": "leak", "type": "LEAK"}, {"id": "thermal", "type": "THRM"}],
+        [{"id": "leak", "type": "LEAK"}],
+        [{"id": "leak", "type": "LEAK"}],
+    ]
+    assert [item["sequence"] for item in result["plan"]["updates"]] == [
+        "0042",
+        "0043",
+        "0044",
+    ]
+    assert [item["desiredName"] for item in result["plan"]["updates"]] == [
+        "3916-SITE1-AREA1-WC02-EQ134-0042-LEAK",
+        "3916-SITE1-AREA1-WC02-EQ134-0043-AIVI",
+        "3916-SITE1-AREA1-WC02-EQ134-0044-THRM",
+    ]
+    assert result["blocked"]["canApply"] is False
+    assert result["blocked"]["unsupported"][0]["observedName"] == "Operator note"
+    assert result["missingRequired"] == "missing_required_name_segment"
+    assert result["overflow"] == "action_sequence_range_overflow"
+    assert result["explicitTypes"] == ["THRM", "", "AIVI"]
+    assert result["suggestedTypes"] == [
+        "THRM",
+        "MECQ",
+        "LEAK",
+        "AIVI",
+        "THRM",
+        "",
+    ]
+    assert result["overlayLabels"] == [
+        {
+            "id": "leak",
+            "name": "Acoustic Leak Inspection - 8",
+            "position": {"x": 12, "y": 4, "z": 0},
+        },
+        {
+            "id": "thermal",
+            "name": "Existing-0007-THRM",
+            "position": {"x": 12, "y": 7, "z": 0},
+        },
+    ]
+
+
 def test_connect_candidates_exclude_existing_and_rank_bounded_candidates() -> None:
     result = run_model(
         textwrap.dedent(
@@ -775,6 +1157,7 @@ def test_editor_bridge_restores_validation_selection_and_adds_one_draft_step() -
         global.location = {
           origin: "https://orbit.test",
           pathname: `/control_room/maps/${mapId}/edit`,
+          search: "?action=action-2",
         };
         global.document = {getElementById: (id) => id === "root" ? root : null};
         global.window = {
@@ -803,6 +1186,7 @@ def test_editor_bridge_restores_validation_selection_and_adds_one_draft_step() -
             !snapshot?.ok ||
             snapshot.snapshot.waypoints.length !== 3 ||
             snapshot.snapshot.selectedWaypointIds.join(",") !== "a" ||
+            snapshot.snapshot.currentActionId !== "action-2" ||
             snapshot.snapshot.editIndex !== 3
           ) throw new Error(`bad snapshot: ${JSON.stringify(snapshot)}`);
 
@@ -907,7 +1291,12 @@ def test_editor_bridge_selects_and_creates_one_archive_or_settings_step() -> Non
           mapDisplay: {
             siteMapId: mapId,
             anchoring: {anchors: ["a", "b", "c"].map((id, x) => ({
-              id, seedTformWaypoint: {position: {x, y: 0, z: 0}}
+              id, seedTformWaypoint: {
+                position: {x, y: 0, z: 0},
+                rotation: id === "c"
+                  ? {x: 0, y: 0, z: Math.SQRT1_2, w: Math.SQRT1_2}
+                  : {x: 0, y: 0, z: 0, w: 1},
+              }
             }))}
           },
           siteMaps: {entities: {[mapId]: {
@@ -937,7 +1326,10 @@ def test_editor_bridge_selects_and_creates_one_archive_or_settings_step() -> Non
             "fid-1": {id: "fid-1", siteMapId: mapId, name: "Tag"}
           }},
           siteActions: {ids: ["action-1"], entities: {
-            "action-1": {id: "action-1", siteMapId: mapId, name: "Inspect", waypointId: "c"}
+            "action-1": {
+              id: "action-1", siteMapId: mapId, name: "Inspect", waypointId: "c",
+              waypointTformBodyOffset: {position: {x: 1, y: 0, z: 0}},
+            }
           }},
           mapEditor: {
             info: {
@@ -1033,6 +1425,8 @@ def test_editor_bridge_selects_and_creates_one_archive_or_settings_step() -> Non
             snapshot.snapshot.docks[0].waypointIds.join(",") !== "a" ||
             snapshot.snapshot.fiducials.length !== 1 ||
             snapshot.snapshot.actions.length !== 1 ||
+            Math.abs(snapshot.snapshot.actions[0].position?.x - 2) > 1e-9 ||
+            Math.abs(snapshot.snapshot.actions[0].position?.y - 1) > 1e-9 ||
             !snapshot.snapshot.load.complete
           ) throw new Error(`catalog snapshot failed: ${JSON.stringify(snapshot)}`);
 
@@ -1822,6 +2216,7 @@ def test_content_marks_mutation_timeout_and_invalidation_as_ambiguous() -> None:
             return () => {};
           },
         };
+        require("./extension/orbit-site-map-editor/panel-layout.js");
         require("./extension/orbit-site-map-editor/model.js");
         require("./extension/orbit-site-map-editor/query.js");
         require("./extension/orbit-site-map-editor/content.js");
@@ -2709,3 +3104,195 @@ def test_walk_ui_is_read_only_and_exposes_coverage_controls() -> None:
         "eligible": ["a"],
         "planButtonDisabled": False,
     }
+
+
+def test_editor_bridge_renames_actions_in_one_verified_native_draft() -> None:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for JavaScript bridge tests")
+    script = textwrap.dedent(
+        """
+        const mapId = "map-1";
+        const waypoint = (id) => ({waypoint: {
+          id, annotations: {name: id},
+          waypointTformKo: {position: {x: 0, y: 0, z: 0}}
+        }});
+        const action = (uuid, name, waypointId, futureValue) => ({
+          uuid, name, siteMapId: mapId, action: {
+            waypointId,
+            dataAcquisition: {captureChannel: "thermal", futureValue},
+          },
+          futureTopLevel: {preserve: futureValue},
+        });
+        const thermal = action("action-1", "Thermal Inspection - 1", "a", 17);
+        const leak = action("action-2", "Acoustic Leak Inspection - 2", "b", 23);
+        let dispatchCount = 0;
+        const state = {
+          mapDisplay: {
+            siteMapId: mapId,
+            anchoring: {anchors: ["a", "b"].map((id, x) => ({
+              id, seedTformWaypoint: {position: {x, y: 0, z: 0}}
+            }))},
+          },
+          siteMaps: {entities: {[mapId]: {
+            waypointIds: ["a", "b"], recordingSessionIds: ["r1"],
+            metadata: {displayName: "Test"},
+          }}},
+          siteWaypoints: {
+            ids: ["a", "b"], entities: {a: waypoint("a"), b: waypoint("b")},
+          },
+          siteEdges: {ids: [], entities: {}},
+          siteElements: {
+            ids: ["action-1", "action-2"],
+            entities: {"action-1": thermal, "action-2": leak},
+          },
+          recordingSessions: {entities: {r1: {
+            name: "Run", waypointIds: ["a", "b"],
+          }}},
+          mapEditor: {
+            info: {
+              activeTool: "waypoint_selection",
+              selectedWaypointIds: ["b", "a"], selectedEdgeIds: [],
+              pendingEdgeCreation: {},
+            },
+            form: {
+              present: {index: 0}, past: [], future: [],
+              data: {edges: {ids: [], entities: {}, nonEntities: {}}},
+            },
+          },
+          mapMissionsEditor: {form: {
+            present: {index: 0}, past: [], future: [],
+            data: {actions: {ids: [], entities: {}, nonEntities: {}}},
+          }},
+        };
+        const store = {
+          getState: () => state,
+          dispatch(event) {
+            if (event.type === "missionsAndActionsForm/updateActions") {
+              dispatchCount += 1;
+              state.mapMissionsEditor.form.past.push({
+                index: state.mapMissionsEditor.form.present.index,
+              });
+              for (const updated of event.payload.updatedActions) {
+                const id = updated.uuid;
+                state.mapMissionsEditor.form.data.actions.entities[id] =
+                  JSON.parse(JSON.stringify(updated));
+                if (!state.mapMissionsEditor.form.data.actions.ids.includes(id)) {
+                  state.mapMissionsEditor.form.data.actions.ids.push(id);
+                }
+              }
+              state.mapMissionsEditor.form.present.index += 2;
+            }
+            return event;
+          },
+        };
+        const root = {__reactContainer$test: {memoizedProps: {store}}};
+        const messages = [];
+        let onMessage;
+        global.location = {
+          origin: "https://orbit.test",
+          pathname: `/control_room/maps/${mapId}/edit`,
+        };
+        global.document = {getElementById: (id) => id === "root" ? root : null};
+        global.window = {
+          addEventListener: (type, listener) => {if (type === "message") onMessage = listener;},
+          postMessage: (message) => messages.push(message),
+          setTimeout,
+        };
+        require("./extension/orbit-site-map-editor/page-bridge.js");
+
+        async function request(requestId, command, payload = {}) {
+          await onMessage({
+            source: window,
+            origin: location.origin,
+            data: {
+              channel: "orbit-site-map-editor-v1",
+              type: "orbit-site-map-editor-request",
+              requestId, command, mapId, ...payload,
+            },
+          });
+          return messages.find((message) => message.requestId === requestId);
+        }
+
+        (async () => {
+          const before = await request("before", "snapshot");
+          const renamed = await request("rename", "rename_actions", {
+            actionNameUpdates: [
+              {
+                id: "action-1", waypointId: "a",
+                observedName: "Thermal Inspection - 1",
+                desiredName: "SITE1.AREA1/WC02-EQ134-0042-THRM",
+              },
+              {
+                id: "action-2", waypointId: "b",
+                observedName: "Acoustic Leak Inspection - 2",
+                desiredName: "SITE1.AREA1/WC02-EQ134-0043-LEAK",
+              },
+            ],
+          });
+          const after = await request("after", "snapshot");
+          const edit = state.mapMissionsEditor.form.data.actions.entities["action-1"];
+          const historyBeforeStale = JSON.stringify({
+            index: state.mapMissionsEditor.form.present.index,
+            undo: state.mapMissionsEditor.form.past.length,
+            dispatchCount,
+          });
+          const stale = await request("stale", "rename_actions", {
+            actionNameUpdates: [{
+              id: "action-1", waypointId: "a",
+              observedName: "Thermal Inspection - 1",
+              desiredName: "SITE1-AREA1-WC02-EQ134-0044-THRM",
+            }],
+          });
+          const historyAfterStale = JSON.stringify({
+            index: state.mapMissionsEditor.form.present.index,
+            undo: state.mapMissionsEditor.form.past.length,
+            dispatchCount,
+          });
+          process.stdout.write(JSON.stringify({
+            beforeNames: before.snapshot.actions.map((item) => item.name),
+            beforeActionIndex: before.snapshot.actionEditIndex,
+            renamed,
+            afterNames: after.snapshot.actions.map((item) => item.name).sort(),
+            afterActionIndex: after.snapshot.actionEditIndex,
+            afterUndoDepth: after.snapshot.actionHistory.undoDepth,
+            preservedNested: edit.action.dataAcquisition.futureValue,
+            preservedTopLevel: edit.futureTopLevel.preserve,
+            staleError: stale.error,
+            staleStateUnchanged: historyBeforeStale === historyAfterStale,
+            dispatchCount,
+          }));
+        })().catch((error) => {
+          console.error(error);
+          process.exitCode = 1;
+        });
+        """
+    )
+    completed = subprocess.run(
+        [node, "-e", script],
+        cwd=Path.cwd(),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    result = json.loads(completed.stdout)
+
+    assert result["beforeNames"] == [
+        "Thermal Inspection - 1",
+        "Acoustic Leak Inspection - 2",
+    ]
+    assert result["beforeActionIndex"] == 0
+    assert result["renamed"]["ok"] is True
+    assert result["renamed"]["updatedCount"] == 2
+    assert result["renamed"]["draftIndexDelta"] == 2
+    assert result["afterNames"] == [
+        "SITE1.AREA1/WC02-EQ134-0042-THRM",
+        "SITE1.AREA1/WC02-EQ134-0043-LEAK",
+    ]
+    assert result["afterActionIndex"] == 2
+    assert result["afterUndoDepth"] == 1
+    assert result["preservedNested"] == 17
+    assert result["preservedTopLevel"] == 17
+    assert result["staleError"] == "action_name_changed"
+    assert result["staleStateUnchanged"] is True
+    assert result["dispatchCount"] == 1

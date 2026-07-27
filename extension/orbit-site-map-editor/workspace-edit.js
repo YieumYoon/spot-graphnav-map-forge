@@ -30,7 +30,7 @@
         <section class="osme-section osme-advanced-pane" data-workspace-tab="edit">
           <div class="osme-section-heading">
             <div><span>EDIT</span><strong>Archive & edge settings</strong></div>
-            <span class="osme-safety-chip">one native draft</span>
+            <span class="osme-safety-chip">one unsaved change</span>
           </div>
           <div class="osme-uncertainty-recovery"></div>
           <div class="osme-toolbar">
@@ -63,7 +63,7 @@
             <div class="osme-toolbar">
               <button class="osme-button osme-cancel-mutation" type="button">Cancel</button>
               <button class="osme-button osme-primary osme-confirm-mutation" type="button">
-                Create unsaved draft
+                Apply unsaved change
               </button>
             </div>
           </div>

@@ -8,11 +8,12 @@ identifiers.
 
 - Orbit Site Map editor: 5.1 series
 - Extension: `extension/orbit-site-map-editor`
-- Extension release: 0.5.0
+- Extension release: `0.12.4`
 - Native edit adapter baseline: 0.2.2
 - Migration Assistant extension: `extension/orbit-graph-repair`
 - Migration Assistant release: 0.8.1
-- Qualification date: 2026-07-24
+- Current-build static qualification date: 2026-07-27
+- Latest live mutation qualification date: 2026-07-24
 
 Re-run the complete checklist after an Orbit upgrade or an adapter action-name change.
 
@@ -129,6 +130,67 @@ The 0.5 static gates additionally prove that the History tab, edit-plan import/e
 journal, before/after plan preview, and proposed-edit overlay are absent. Native mutation
 verification still requires a positive draft-index change, exactly one new Undo step, and exact
 target read-back. The unverified-edit recovery control remains available in **Edit**.
+
+The version workflow uses an explicit semantic type: `fix` increments patch, `feature` increments
+minor, and `breaking` increments major. The `bump` command updates the Chrome version and its
+development label even when another development label is active.
+
+The static Action-selection checks and naming simulations cover:
+
+- Action naming owns a separate **Action Names** workspace and is absent from **Edit**;
+- Orbit Action route changes publish a dedicated event, and reinjection restores wrapped browser
+  history methods;
+- the workspace starts in Normal mode, where map Action clicks do not alter the rename selection;
+- only explicit Add Actions mode accepts Action route events, and leaving the workspace or applying
+  renames returns to Normal;
+- the `A` shortcut toggles the mode only in the visible Action Names workspace and is ignored in
+  text-entry controls;
+- Action selections are session-only and are not restored from Chrome storage;
+- Actions attached to the same waypoint remain separate selections and waypoint names are never
+  changed;
+- selecting an Action again does not duplicate its ID;
+- one first-number value such as `0001` determines both the starting integer and zero-padding,
+  replacing separate start and width controls;
+- the fixed hyphen-joined structure requires enterprise, site, and area, while blank work center
+  and machine/equipment values are omitted without doubled separators;
+- selection order controls contiguous, width-bounded Action sequences;
+- each Action has an editable `THRM`, `MECQ`, `LEAK`, or `AIVI` selector populated from an explicit
+  suffix, Action name, or metadata, and remains blank when no clue matches;
+- Action-ID-keyed rows retain their existing DOM and focused selector across repeated graph
+  snapshots; only changed names, order, types, additions, and removals are reconciled;
+- the Action Names workspace has a persisted, default-on map-label toggle independent of Detailed
+  overlay; it composes each Action's `waypointTformBodyOffset` with the waypoint seed transform,
+  reports the number of projectable Actions, and keeps multiple Actions on one waypoint spatially
+  separate;
+- Action-name labels use deterministic, position-based density steps: zoomed-out maps sample
+  uniformly across the viewport with no current/selection priority, while zooming in reveals
+  progressively more individual Action names and `1.2×` or greater shows every visible Action;
+- hierarchy, sequence, and type inputs immediately update the complete multi-Action preview;
+- missing types, missing selected Actions, duplicate output names, and existing-name
+  collisions prevent applying renames;
+- a valid multi-Action batch uses `missionsAndActionsForm/updateActions`, preserves unrecognized
+  nested Action fields, advances the Action draft index, creates exactly one Undo step, and is
+  reflected by the next read-only snapshot;
+- a stale observed Action name is rejected before dispatch and leaves Action history unchanged.
+
+The panel-layout simulation proves that the default right rail, optional left rail, and Float mode
+normalize deterministically. Closing or deactivating the panel removes its document-level rail
+attribute so Orbit regains the full viewport rather than retaining an empty reserved column.
+
+## 2026-07-27 Action-name adapter discovery
+
+A read-only inspection of the authenticated Orbit 5.1 editor on 2026-07-27 confirmed the native
+Action edit contract without dispatching it:
+
+- the native action type is `missionsAndActionsForm/updateActions`;
+- the payload contains `updatedActions` and `originalActionsById`;
+- unsaved Action entities and their independent history live under
+  `mapMissionsEditor.form.data.actions` and `mapMissionsEditor.form`;
+- the sampled Action form had no existing unsaved draft before or after the inspection.
+
+Result: **passed** for read-only adapter discovery. A reversible live Action-name mutation probe
+remains unqualified until an operator explicitly authorizes a backed-up target, exact selected
+Actions, one newest Undo, and restoration to the prior state. Orbit **Save** was not pressed.
 
 ## 0.8.1 Migration Assistant mutation-safety probe — passed
 

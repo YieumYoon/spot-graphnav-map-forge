@@ -27,10 +27,12 @@ In the Chrome profile that opens Orbit:
 4. Choose `extension/orbit-site-map-editor`.
 5. Reload the Orbit Site Map editor.
 
-The Editor adds five workspaces:
+The Editor adds six workspaces:
 
 - **Explore** — live catalog search, Inspector, and overlays;
 - **Select** — exact-ID selections and graph/recording/spatial tools;
+- **Action Names** — map-selected Actions with structured inspection names and independent types;
+  Actions on the same waypoint remain independent and waypoint names are never changed;
 - **Edit** — reviewed Connect, Archive, and edge-setting drafts;
 - **Validate** — topology, reachability, path, settings, and crosswalk checks;
 - **Walk** — mission-independent Site View coverage planning.
@@ -95,6 +97,13 @@ research at:
 Do not treat that archive as an Orbit-supported Site Map copy or migration path.
 
 ## Development
+
+Start an Editor change with its semantic type so the Chrome version and development label move
+together (`fix` → patch, `feature` → minor, `breaking` → major):
+
+```bash
+uv run python scripts/set_editor_build.py bump feature --label short-feature-name
+```
 
 ```bash
 uv run python scripts/check_active_boundary.py
