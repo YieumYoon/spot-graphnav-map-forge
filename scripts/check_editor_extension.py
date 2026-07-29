@@ -94,6 +94,11 @@ def main(argv: list[str] | None = None) -> int:
     for source in sorted(EXTENSION.glob("*.js")):
         run([node, "--check", str(source)])
 
+    javascript_tests = sorted((ROOT / "tests" / "js").glob("*.test.cjs"))
+    if not javascript_tests:
+        fail("node:test suite is missing")
+    run([node, "--test", *(str(path) for path in javascript_tests)])
+
     tests = (
         []
         if args.full

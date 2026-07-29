@@ -1,5 +1,4 @@
 import json
-import re
 import shutil
 import subprocess
 import textwrap
@@ -190,59 +189,6 @@ def test_workspace_templates_own_complete_non_overlapping_selectors() -> None:
     assert "actionNameLabelDensity(zoom)" in content
     assert "actionLabelCandidatesByCell" in content
     assert "const actionNameLabels = actionNameLabelsVisible" in content
-
-
-def test_unchanged_snapshot_poll_skips_full_render_and_workspace_recalculation() -> None:
-    content = (EXTENSION / "content.js").read_text(encoding="utf-8")
-    advanced = (EXTENSION / "advanced.js").read_text(encoding="utf-8")
-    areas = (EXTENSION / "areas-ui.js").read_text(encoding="utf-8")
-
-    assert "snapshotFingerprint" in content
-    assert "if (!snapshotChanged && !force) return state.snapshot;" in content
-    assert "snapshotRevision" in content
-    assert "findingsSnapshotRevision" in advanced
-    assert "function renderWorkspace(tab)" in advanced
-    assert 'workspaceRegistry.activeId() === "areas"' in areas
-
-
-def test_edge_settings_contract_matches_isolated_bridges_and_independent_assistant() -> None:
-    def declared_fields(path: Path, declaration: str) -> list[str]:
-        source = path.read_text(encoding="utf-8")
-        start = source.index(f"const {declaration}")
-        block = source[start : source.index("]", start) + 1]
-        return re.findall(r'"([A-Za-z][A-Za-z0-9]*)"', block)
-
-    canonical = declared_fields(EXTENSION / "edge-settings-contract.js", "FIELDS")
-    assert canonical == declared_fields(EXTENSION / "page-bridge.js", "EDGE_SETTING_FIELDS")
-    assert canonical == declared_fields(
-        Path("extension/orbit-graph-repair/baseline.js"), "EDGE_SETTING_FIELDS"
-    )
-    assert canonical == declared_fields(
-        Path("extension/orbit-graph-repair/page-bridge.js"), "EDGE_SETTING_FIELDS"
-    )
-
-    workflow = (EXTENSION / "workflow.js").read_text(encoding="utf-8")
-    area_settings = (EXTENSION / "area-settings.js").read_text(encoding="utf-8")
-    overlay_settings = (EXTENSION / "overlay-settings.js").read_text(encoding="utf-8")
-    assert "edgeSettingsContract.FIELDS" in workflow
-    assert "edgeSettingsContract.FIELD_SET" in area_settings
-    assert "EDGE_SETTING_FIELDS: edgeSettingsContract.FIELDS" in overlay_settings
-
-
-def test_bridge_mutations_share_history_pipeline_but_keep_exact_readbacks() -> None:
-    bridge = (EXTENSION / "page-bridge.js").read_text(encoding="utf-8")
-
-    assert "function executeNativeMutation({" in bridge
-    assert bridge.count("const execution = executeNativeMutation({") == 4
-    for exact_readback in (
-        "edge_draft_not_created",
-        "edge_archive_batch_not_created",
-        "edge_settings_batch_not_created",
-        "edge_annotation_readback_failed",
-        "action_name_batch_not_created",
-        "action_name_readback_failed",
-    ):
-        assert exact_readback in bridge
 
 
 def test_overlay_preferences_and_each_label_value_are_independent() -> None:
