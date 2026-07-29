@@ -129,3 +129,50 @@ test("snapshot and mutation boundaries avoid repeated full work", () => {
     "action_name_readback_failed",
   ]) assert.match(bridge, new RegExp(readback));
 });
+
+test("overlay renderer owns SVG projection, labels, and animation lifecycle", () => {
+  class SvgNode {
+    constructor(name) {
+      this.name = name;
+      this.attributes = {};
+      this.children = [];
+      this.textContent = "";
+    }
+    append(...nodes) { this.children.push(...nodes); }
+    replaceChildren(...nodes) { this.children = [...nodes]; }
+    setAttribute(key, value) { this.attributes[key] = value; }
+  }
+  global.document = {createElementNS: (_namespace, name) => new SvgNode(name)};
+  require(path.join(EDITOR, "overlay-renderer.js"));
+  const renderer = global.OrbitSiteMapEditorOverlayRenderer;
+  const overlay = new SvgNode("svg");
+  const frame = renderer.createFrame(overlay, {
+    rect: {left: 10, top: 20, right: 210, bottom: 120, width: 200, height: 100},
+    cameraX: 5,
+    cameraY: 8,
+    zoom: 2,
+    cameraWidthMeters: 10,
+    detailedVisible: true,
+  });
+  assert.deepEqual(frame.project({x: 5, y: 8}), {x: 110, y: 70});
+  assert.equal(frame.inside({x: 110, y: 70}), true);
+  assert.equal(overlay.children.length, 4);
+  const label = new SvgNode("text");
+  renderer.setLabel(label, ["a".repeat(40), "b".repeat(40)], 50);
+  assert.match(label.textContent, /…/);
+  assert.equal(label.children[0].name, "title");
+
+  const calls = [];
+  let active = true;
+  const loop = renderer.createAnimationLoop({
+    draw: () => calls.push("draw"),
+    shouldContinue: () => active,
+    schedule: (callback) => {
+      calls.push("schedule");
+      active = false;
+      callback();
+    },
+  });
+  loop();
+  assert.deepEqual(calls, ["draw", "schedule"]);
+});

@@ -9,7 +9,6 @@
   const READY_TYPE = "orbit-site-map-editor-ready";
   const ACTION_SELECTION_TYPE = "orbit-site-map-editor-action-selection";
   const DISPOSE_EVENT = "orbit-site-map-editor-dispose-v1";
-  const SVG_NS = "http://www.w3.org/2000/svg";
   const CAMERA_WIDTH_METERS = 10;
   const SNAPSHOT_POLL_INTERVAL_MS = 1800;
   const MAX_NATIVE_VALIDATIONS = 12;
@@ -53,6 +52,7 @@
   const queryEngine = globalThis.OrbitSiteMapEditorQuery;
   const areaSettings = globalThis.OrbitSiteMapEditorAreaSettings;
   const overlaySettings = globalThis.OrbitSiteMapEditorOverlaySettings;
+  const overlayRenderer = globalThis.OrbitSiteMapEditorOverlayRenderer;
 
   if (
     !extensionContext ||
@@ -60,8 +60,16 @@
     !model ||
     !queryEngine ||
     !areaSettings ||
-    !overlaySettings
+    !overlaySettings ||
+    !overlayRenderer
   ) return;
+  const {
+    labelDensity,
+    recordingColor,
+    setLabel: setOverlayLabel,
+    stableStringHash,
+    svgElement,
+  } = overlayRenderer;
   const instanceId =
     globalThis.crypto?.randomUUID?.() ||
     `osme-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -1487,61 +1495,6 @@
     renderConnect();
   }
 
-  function svgElement(name, attributes = {}) {
-    const element = document.createElementNS(SVG_NS, name);
-    for (const [key, value] of Object.entries(attributes)) {
-      element.setAttribute(key, String(value));
-    }
-    return element;
-  }
-
-  function stableStringHash(value) {
-    let hash = 2166136261;
-    for (const character of String(value || "")) {
-      hash ^= character.codePointAt(0);
-      hash = Math.imul(hash, 16777619);
-    }
-    return hash;
-  }
-
-  function boundedOverlayLabel(parts, maximum = 300) {
-    const full = parts.join(" · ");
-    if (full.length <= maximum) return { display: full, full };
-    const included = [];
-    for (const part of parts) {
-      const candidate = [...included, part].join(" · ");
-      if (candidate.length > maximum - 18) break;
-      included.push(part);
-    }
-    const hidden = parts.length - included.length;
-    const suffix = hidden > 0 ? ` · … (+${hidden})` : "…";
-    const display = included.length
-      ? `${included.join(" · ")}${suffix}`
-      : `${full.slice(0, maximum - 1)}…`;
-    return { display, full };
-  }
-
-  function setOverlayLabel(element, parts, maximum = 300) {
-    const summary = boundedOverlayLabel(parts, maximum);
-    element.textContent = summary.display;
-    if (summary.display !== summary.full) {
-      const title = svgElement("title");
-      title.textContent = summary.full.length > 2000
-        ? `${summary.full.slice(0, 1999)}…`
-        : summary.full;
-      element.append(title);
-    }
-    return summary.display;
-  }
-
-  function recordingColor(recordingId) {
-    return `hsl(${Math.abs(stableStringHash(recordingId)) % 360} 72% 58%)`;
-  }
-
-  function labelDensity(steps, zoom) {
-    return steps.find((step) => zoom < step.maxZoom) || steps.at(-1);
-  }
-
   function actionNameLabelDensity(zoom) {
     return labelDensity(ACTION_NAME_LABEL_DENSITY_STEPS, zoom);
   }
@@ -1594,51 +1547,20 @@
     ].join("|");
     if (overlayKey === state.lastOverlayKey) return;
     state.lastOverlayKey = overlayKey;
-    elements.overlay.replaceChildren();
-
-    const pixelsPerMeter = rect.width / CAMERA_WIDTH_METERS * zoom;
-    const project = (position) => ({
-      x: rect.left + rect.width / 2 + (position.x - cameraX) * pixelsPerMeter,
-      y: rect.top + rect.height / 2 - (position.y - cameraY) * pixelsPerMeter,
+    const {
+      actionNameGroup,
+      areaLabelGroup,
+      group,
+      inside,
+      project,
+    } = overlayRenderer.createFrame(elements.overlay, {
+      rect,
+      cameraX,
+      cameraY,
+      zoom,
+      cameraWidthMeters: CAMERA_WIDTH_METERS,
+      detailedVisible,
     });
-    const inside = (point, margin = 20) =>
-      point.x >= rect.left - margin &&
-      point.x <= rect.right + margin &&
-      point.y >= rect.top - margin &&
-      point.y <= rect.bottom + margin;
-    const clipId = "osme-map-clip";
-    const definitions = svgElement("defs");
-    const clip = svgElement("clipPath", { id: clipId });
-    clip.append(
-      svgElement("rect", {
-        x: rect.left,
-        y: rect.top,
-        width: rect.width,
-        height: rect.height,
-      }),
-    );
-    const edgeArrow = svgElement("marker", {
-      id: "osme-edge-arrow",
-      markerWidth: 7,
-      markerHeight: 7,
-      refX: 6,
-      refY: 3.5,
-      orient: "auto",
-      markerUnits: "strokeWidth",
-    });
-    edgeArrow.append(svgElement("path", {
-      d: "M 0 0 L 0 7 L 7 3.5 z",
-      fill: "context-stroke",
-    }));
-    definitions.append(clip, edgeArrow);
-    elements.overlay.append(definitions);
-    const group = svgElement("g", {
-      "clip-path": `url(#${clipId})`,
-      visibility: detailedVisible ? "visible" : "hidden",
-    });
-    const actionNameGroup = svgElement("g", { "clip-path": `url(#${clipId})` });
-    const areaLabelGroup = svgElement("g", { "clip-path": `url(#${clipId})` });
-    elements.overlay.append(group, areaLabelGroup, actionNameGroup);
     const liveGraph = graph();
     const workWaypointIds = new Set(
       state.overlay.global.fields.selection
@@ -2202,11 +2124,13 @@
     }
   }
 
-  function animationLoop() {
-    if (state.disposed || !root.isConnected) return;
-    drawOverlay();
-    overlayAnimationId = window.requestAnimationFrame(animationLoop);
-  }
+  const animationLoop = overlayRenderer.createAnimationLoop({
+    draw: drawOverlay,
+    shouldContinue: () => !state.disposed && root.isConnected,
+    schedule: (callback) => {
+      overlayAnimationId = window.requestAnimationFrame(callback);
+    },
+  });
 
   elements.close.addEventListener("click", () => {
     state.panelOpen = false;

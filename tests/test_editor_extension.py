@@ -34,6 +34,7 @@ def test_editor_extension_manifest_is_independent_and_minimal() -> None:
         "edge-settings-contract.js",
         "area-settings.js",
         "overlay-settings.js",
+        "overlay-renderer.js",
     ):
         assert script_order[dependency] < script_order["content.js"]
     assert script_order["panel-layout.js"] < script_order["content.js"]
@@ -181,8 +182,9 @@ def test_workspace_templates_own_complete_non_overlapping_selectors() -> None:
     assert "isTextEntryTarget(event.target)" in advanced
     assert 'window.addEventListener("keydown"' in advanced
     content = (EXTENSION / "content.js").read_text(encoding="utf-8")
+    overlay_renderer = (EXTENSION / "overlay-renderer.js").read_text(encoding="utf-8")
     assert "actionNameLabelsVisible" in content
-    assert 'visibility: detailedVisible ? "visible" : "hidden"' in content
+    assert 'visibility: detailedVisible ? "visible" : "hidden"' in overlay_renderer
     assert "ACTION_NAME_LABEL_DENSITY_STEPS" in content
     assert "maxZoom: 1.2, cellWidth: 72, cellHeight: 22" in content
     assert "maxZoom: Infinity, cellWidth: 0, cellHeight: 0" in content
@@ -956,6 +958,7 @@ def test_area_settings_aggregate_labels_and_build_partial_or_full_batches() -> N
 
     areas_ui = (EXTENSION / "areas-ui.js").read_text(encoding="utf-8")
     content = (EXTENSION / "content.js").read_text(encoding="utf-8")
+    overlay_renderer = (EXTENSION / "overlay-renderer.js").read_text(encoding="utf-8")
     assert "workspaceRegistry.register({" in areas_ui
     assert 'id: "areas"' in areas_ui
     assert 'value="selected">Checked Areas only' in areas_ui
@@ -971,7 +974,10 @@ def test_area_settings_aggregate_labels_and_build_partial_or_full_batches() -> N
     assert "tabButton.click()" not in areas_ui
     assert "overlayEnabled" not in areas_ui
     assert 'aria-label="Filter Areas"' in areas_ui
-    assert "elements.overlay.append(group, areaLabelGroup, actionNameGroup)" in content
+    assert (
+        "overlay.replaceChildren(definitions, group, areaLabelGroup, actionNameGroup)"
+        in overlay_renderer
+    )
     assert "Object.prototype.hasOwnProperty.call(state.overlay, group)" in content
     assert '"Show all values"' in content
     assert '"Hide all values"' in content
@@ -3158,6 +3164,7 @@ def test_content_marks_mutation_timeout_and_invalidation_as_ambiguous() -> None:
         require("./extension/orbit-site-map-editor/edge-settings-contract.js");
         require("./extension/orbit-site-map-editor/area-settings.js");
         require("./extension/orbit-site-map-editor/overlay-settings.js");
+        require("./extension/orbit-site-map-editor/overlay-renderer.js");
         require("./extension/orbit-site-map-editor/content.js");
         const runtime = global.OrbitSiteMapEditorRuntime;
         const serial = (error) => ({

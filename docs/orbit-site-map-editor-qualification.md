@@ -102,9 +102,9 @@ uv run python scripts/check_assistant_extension.py --release
 ```
 
 The canonical gate validates the active-package read-only boundary, manifest references and
-dynamic build labels, checks every extension JavaScript file, runs the full pytest suite, and
-checks Ruff lint and formatting. Omit `--release` while a transient development `version_name` is
-active.
+dynamic build labels, checks every extension JavaScript file, runs the native `node:test`
+architecture suite and the full pytest suite, and checks Ruff lint and formatting. Omit
+`--release` while a transient development `version_name` is active.
 
 The Assistant gate independently validates its manifest version and file references, checks every
 Assistant JavaScript file, rejects a transient development label in release mode, and compares the

@@ -26,6 +26,7 @@
         "walk-planner.js",
         "area-settings.js",
         "overlay-settings.js",
+        "overlay-renderer.js",
         "content.js",
         "workspace-controller.js",
         "workspace-select.js",
