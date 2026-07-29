@@ -21,6 +21,7 @@
         "query.js",
         "selection.js",
         "validation.js",
+        "edge-settings-contract.js",
         "workflow.js",
         "walk-planner.js",
         "area-settings.js",

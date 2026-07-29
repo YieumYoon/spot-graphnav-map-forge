@@ -1,6 +1,8 @@
 (() => {
   "use strict";
 
+  const edgeSettingsContract = globalThis.OrbitSiteMapEditorEdgeSettingsContract;
+  if (!edgeSettingsContract) return;
   const SCHEMA_VERSION = 3;
   const MAX_AREA_CALLBACK_FIELDS = 200;
   const MAX_STORED_AREA_CALLBACK_FIELDS = 1000;
@@ -1202,6 +1204,7 @@
 
   globalThis.OrbitSiteMapEditorOverlaySettings = Object.freeze({
     CONTROL_GROUPS,
+    EDGE_SETTING_FIELDS: edgeSettingsContract.FIELDS,
     SCHEMA_VERSION,
     areaCallbackFieldCatalog,
     areaParts,

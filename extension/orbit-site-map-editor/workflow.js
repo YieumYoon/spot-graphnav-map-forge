@@ -2,25 +2,11 @@
   "use strict";
 
   const model = globalThis.OrbitSiteMapEditorModel;
-  if (!model) return;
+  const edgeSettingsContract = globalThis.OrbitSiteMapEditorEdgeSettingsContract;
+  if (!model || !edgeSettingsContract) return;
 
-  const SETTING_FIELDS = Object.freeze([
-    "stairs",
-    "directionConstraint",
-    "requireAlignment",
-    "flatGround",
-    "overrideMobilityParams",
-    "mobilityParams",
-    "cost",
-    "disableAlternateRouteFinding",
-    "pathFollowingMode",
-    "maxCorridorDistance",
-    "disableDirectedExploration",
-    "areaCallbacks",
-    "groundClutterMode",
-    "audioVisualSettings",
-  ]);
-  const SETTING_FIELD_SET = new Set(SETTING_FIELDS);
+  const SETTING_FIELDS = edgeSettingsContract.FIELDS;
+  const SETTING_FIELD_SET = edgeSettingsContract.FIELD_SET;
   const ACTION_NAME_SUFFIXES = Object.freeze(["THRM", "MECQ", "LEAK", "AIVI"]);
   const ACTION_NAME_SUFFIX_SET = new Set(ACTION_NAME_SUFFIXES);
 

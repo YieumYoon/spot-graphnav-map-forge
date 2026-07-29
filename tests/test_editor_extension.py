@@ -1,4 +1,5 @@
 import json
+import re
 import shutil
 import subprocess
 import textwrap
@@ -31,11 +32,14 @@ def test_editor_extension_manifest_is_independent_and_minimal() -> None:
         "extension-context.js",
         "model.js",
         "query.js",
+        "edge-settings-contract.js",
         "area-settings.js",
         "overlay-settings.js",
     ):
         assert script_order[dependency] < script_order["content.js"]
     assert script_order["panel-layout.js"] < script_order["content.js"]
+    for consumer in ("workflow.js", "area-settings.js", "overlay-settings.js"):
+        assert script_order["edge-settings-contract.js"] < script_order[consumer]
     for consumer in (
         "workspace-controller.js",
         "workspace-select.js",
@@ -201,12 +205,37 @@ def test_unchanged_snapshot_poll_skips_full_render_and_workspace_recalculation()
     assert 'workspaceRegistry.activeId() === "areas"' in areas
 
 
+def test_edge_settings_contract_matches_isolated_bridges_and_independent_assistant() -> None:
+    def declared_fields(path: Path, declaration: str) -> list[str]:
+        source = path.read_text(encoding="utf-8")
+        start = source.index(f"const {declaration}")
+        block = source[start : source.index("]", start) + 1]
+        return re.findall(r'"([A-Za-z][A-Za-z0-9]*)"', block)
+
+    canonical = declared_fields(EXTENSION / "edge-settings-contract.js", "FIELDS")
+    assert canonical == declared_fields(EXTENSION / "page-bridge.js", "EDGE_SETTING_FIELDS")
+    assert canonical == declared_fields(
+        Path("extension/orbit-graph-repair/baseline.js"), "EDGE_SETTING_FIELDS"
+    )
+    assert canonical == declared_fields(
+        Path("extension/orbit-graph-repair/page-bridge.js"), "EDGE_SETTING_FIELDS"
+    )
+
+    workflow = (EXTENSION / "workflow.js").read_text(encoding="utf-8")
+    area_settings = (EXTENSION / "area-settings.js").read_text(encoding="utf-8")
+    overlay_settings = (EXTENSION / "overlay-settings.js").read_text(encoding="utf-8")
+    assert "edgeSettingsContract.FIELDS" in workflow
+    assert "edgeSettingsContract.FIELD_SET" in area_settings
+    assert "EDGE_SETTING_FIELDS: edgeSettingsContract.FIELDS" in overlay_settings
+
+
 def test_overlay_preferences_and_each_label_value_are_independent() -> None:
     node = shutil.which("node")
     if not node:
         pytest.skip("node is required for JavaScript overlay-setting tests")
     script = textwrap.dedent(
         """
+        require("./extension/orbit-site-map-editor/edge-settings-contract.js");
         require("./extension/orbit-site-map-editor/overlay-settings.js");
         const overlay = OrbitSiteMapEditorOverlaySettings;
         const defaults = overlay.defaults();
@@ -817,6 +846,7 @@ def test_area_settings_aggregate_labels_and_build_partial_or_full_batches() -> N
         pytest.skip("node is required for JavaScript Area-setting tests")
     script = textwrap.dedent(
         """
+        require("./extension/orbit-site-map-editor/edge-settings-contract.js");
         require("./extension/orbit-site-map-editor/area-settings.js");
         const settings = OrbitSiteMapEditorAreaSettings;
         const callback = (description, speed) => ({
@@ -1359,6 +1389,7 @@ def run_editor_modules(script: str) -> dict:
             "query.js",
             "selection.js",
             "validation.js",
+            "edge-settings-contract.js",
             "workflow.js",
             "walk-planner.js",
         )
@@ -2160,6 +2191,7 @@ def test_editor_bridge_selects_and_creates_one_archive_or_settings_step() -> Non
         pytest.skip("node is required for JavaScript bridge tests")
     script = textwrap.dedent(
         """
+        require("./extension/orbit-site-map-editor/edge-settings-contract.js");
         require("./extension/orbit-site-map-editor/area-settings.js");
         require("./extension/orbit-site-map-editor/overlay-settings.js");
         const mapId = "map-1";
@@ -3161,6 +3193,7 @@ def test_content_marks_mutation_timeout_and_invalidation_as_ambiguous() -> None:
         require("./extension/orbit-site-map-editor/panel-layout.js");
         require("./extension/orbit-site-map-editor/model.js");
         require("./extension/orbit-site-map-editor/query.js");
+        require("./extension/orbit-site-map-editor/edge-settings-contract.js");
         require("./extension/orbit-site-map-editor/area-settings.js");
         require("./extension/orbit-site-map-editor/overlay-settings.js");
         require("./extension/orbit-site-map-editor/content.js");

@@ -1,6 +1,8 @@
 (() => {
   "use strict";
 
+  const edgeSettingsContract = globalThis.OrbitSiteMapEditorEdgeSettingsContract;
+  if (!edgeSettingsContract) return;
   const UNSAFE_KEYS = new Set(["__proto__", "constructor", "prototype"]);
   const VALUE_KEYS = [
     "boolValue",
@@ -9,22 +11,7 @@
     "stringValue",
     "value",
   ];
-  const EDGE_SETTING_FIELDS = new Set([
-    "stairs",
-    "directionConstraint",
-    "requireAlignment",
-    "flatGround",
-    "overrideMobilityParams",
-    "mobilityParams",
-    "cost",
-    "disableAlternateRouteFinding",
-    "pathFollowingMode",
-    "maxCorridorDistance",
-    "disableDirectedExploration",
-    "areaCallbacks",
-    "groundClutterMode",
-    "audioVisualSettings",
-  ]);
+  const EDGE_SETTING_FIELDS = edgeSettingsContract.FIELD_SET;
 
   function isObject(value) {
     return Boolean(value && typeof value === "object" && !Array.isArray(value));
