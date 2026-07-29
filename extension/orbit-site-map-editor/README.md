@@ -49,6 +49,7 @@ After live qualification, remove only the transient label with
 | **Action Names** | Select Actions on the Orbit map, assign each inspection type, preview structured names, and apply one reviewed unsaved change; waypoint names are never changed |
 | **Edit** | Validate and Connect waypoint pairs, process a Connect queue, batch Archive edges, copy/paste edge settings, and share presets |
 | **Validate** | Inspect components, isolated/leaves/bridges/articulations, duplicate names/pairs, cross-recording edges, callback issues, paths, reachability, and crosswalks |
+| **Areas** | Show Area callback settings as map labels and merge or replace settings across checked Areas or all editable Areas in one reviewed unsaved change |
 | **Walk** | Create a mission-independent, read-only Site View coverage route with exact waypoint exclusions and numbered route targets |
 
 The header layout control defaults to a separate **Right** rail. **Left** moves that rail to the
@@ -135,9 +136,51 @@ At a wide map scale the overlay samples one Action per evenly spaced screen cell
 the current or selected Action priority. Zooming in reduces the cell size until every Action in
 the visible area can show its own name from approximately `1.2×` zoom.
 
+The Explore tab's **Detailed overlay** keeps separate **Overall**, **Waypoints**, **Edges**, and
+**Areas** groups. Each group has its own visibility control; the three object groups also provide
+**Show all values** and **Hide all values** shortcuts. The map can show one value such as Edge
+speed, gait, stored connection direction, or Orbit's direction-of-travel setting without the other
+details. Waypoint values include identity, recording, degree, robot, timestamp, and the read-back
+visual/thermal panorama settings. Edge values expose the public mobility, path, environment, cost,
+and Area-callback annotations as independent controls. An enabled Edge value that is absent from
+the read-only snapshot is labeled `not set` instead of silently suppressing the entire Edge label.
+
+Area controls visually separate **Area identity**, **Same Edge settings, grouped by Area**, and
+**Callback parameters**. The middle section does not read a second Area-owned copy: it aggregates
+the same per-Edge settings shown by the **Edges** group across the Edges attached to that Area.
+Callback parameters default to hidden and include only current values; Orbit's form specs,
+defaults, option lists, and UI metadata are filtered out, and duplicate top-level/recorded-data
+representations are collapsed. Every callback value that can appear in an Area label has a
+matching searchable control. Mixed callback or associated-Edge variants are labeled `mixed (N)`
+instead of choosing one value.
+
+Waypoint and Edge labels remain available at wide map scales through deterministic screen-cell
+sampling; selected, work-selection, and finding objects are prioritized. Area labels intentionally
+start at `0.8×` zoom, are sampled until `1.5×`, and then show every visible Area within the render
+bound. Map labels still use a bounded summary, so select the few values needed for the current
+inspection. These preferences are retained across reloads, and legacy flat overlay preferences are
+migrated automatically. Action-name labels remain owned by **Action Names** and independent of
+this master control.
+
+The overlay reports only settings present in the extension's read-only graph snapshot. Orbit's
+native Waypoint localize/lost-detector/infrared controls and the allow-travel state of Edges already
+filtered out of the active graph are not inferred or shown as fabricated values.
+
+The **Areas** tab derives each Area's effective callback and traversal settings from its associated
+active Edges. Explore's Area overlay controls choose the label fields shown at the Area or
+associated-waypoint centroid; each list row can expand the exact current callback and Edge-settings
+JSON. Checked-Area scope changes only checked Areas;
+all-Area scope targets every editable Area. Choose whether the JSON targets Area callbacks or
+associated Edge settings. Merge mode applies only listed fields and preserves omitted fields
+(`null` removes one field), while replace mode substitutes the selected settings object and always
+preserves Area callbacks when replacing Edge settings. The review reports exact Area and Edge
+counts before creating one native unsaved Edge-settings draft.
+
 The extension never presses **Save**, never calls a private server write API, and rejects stale,
 foreign, missing, duplicate, or changed targets. Connect validation is capped at 12 nearby
-candidates per batch and restores the previous Orbit selection.
+candidates per batch, restores the previous Orbit selection, and shows Orbit's available error or
+warning detail when a candidate is rejected. The default Connect candidate radius is 2m, matching
+Orbit's observed native edge-length limit; a previously saved operator radius remains unchanged.
 
 Orbit may advance its internal draft index by more than one for a single Undo step. The extension
 therefore requires a positive draft-index change, exactly one new Undo step, and exact target

@@ -27,7 +27,13 @@ def test_editor_extension_manifest_is_independent_and_minimal() -> None:
     assert len(content_script["js"]) == len(set(content_script["js"]))
 
     script_order = {name: index for index, name in enumerate(content_script["js"])}
-    for dependency in ("extension-context.js", "model.js", "query.js"):
+    for dependency in (
+        "extension-context.js",
+        "model.js",
+        "query.js",
+        "area-settings.js",
+        "overlay-settings.js",
+    ):
         assert script_order[dependency] < script_order["content.js"]
     assert script_order["panel-layout.js"] < script_order["content.js"]
     for consumer in (
@@ -36,9 +42,11 @@ def test_editor_extension_manifest_is_independent_and_minimal() -> None:
         "workspace-edit.js",
         "workspace-validate.js",
         "advanced.js",
+        "areas-ui.js",
         "walk-ui.js",
     ):
         assert script_order["content.js"] < script_order[consumer]
+    assert script_order["advanced.js"] < script_order["areas-ui.js"]
 
     web_resources = [
         resource
@@ -165,13 +173,821 @@ def test_workspace_templates_own_complete_non_overlapping_selectors() -> None:
     assert 'window.addEventListener("keydown"' in advanced
     content = (EXTENSION / "content.js").read_text(encoding="utf-8")
     assert "actionNameLabelsVisible" in content
-    assert 'visibility: state.overlay.detailed ? "visible" : "hidden"' in content
+    assert 'visibility: detailedVisible ? "visible" : "hidden"' in content
     assert "ACTION_NAME_LABEL_DENSITY_STEPS" in content
     assert "maxZoom: 1.2, cellWidth: 72, cellHeight: 22" in content
     assert "maxZoom: Infinity, cellWidth: 0, cellHeight: 0" in content
     assert "actionNameLabelDensity(zoom)" in content
     assert "actionLabelCandidatesByCell" in content
     assert "const actionNameLabels = actionNameLabelsVisible" in content
+
+
+def test_overlay_preferences_and_each_label_value_are_independent() -> None:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for JavaScript overlay-setting tests")
+    script = textwrap.dedent(
+        """
+        require("./extension/orbit-site-map-editor/overlay-settings.js");
+        const overlay = OrbitSiteMapEditorOverlaySettings;
+        const defaults = overlay.defaults();
+        const legacy = overlay.normalizePreferences({
+          detailed: false,
+          selection: false,
+          findings: true,
+          components: true,
+          names: false,
+          ids: true,
+          recordings: true,
+          degree: false,
+          robot: true,
+          timestamps: true,
+          edges: false,
+          edgeDetails: true,
+          ignoredFutureField: true,
+        });
+        const roundTrip = overlay.normalizePreferences(
+          JSON.parse(JSON.stringify(legacy))
+        );
+
+        const only = (group, field) => {
+          const preferences = overlay.defaults();
+          for (const key of Object.keys(preferences[group].fields)) {
+            preferences[group].fields[key] = false;
+          }
+          preferences[group].fields[field] = true;
+          return preferences;
+        };
+        const onlyMany = (group, fields) => {
+          const preferences = overlay.defaults();
+          for (const key of Object.keys(preferences[group].fields)) {
+            preferences[group].fields[key] = false;
+          }
+          for (const field of fields) preferences[group].fields[field] = true;
+          return preferences;
+        };
+        const onlyArea = (field) => {
+          const preferences = only("area", field);
+          preferences.area.callbackFieldDefault = false;
+          return preferences;
+        };
+        const waypoint = {
+          id: "waypoint-1234567890",
+          name: "North",
+          recordingName: "Run 7",
+          degree: 3,
+          robotNickname: "Spot",
+          creationTime: "2026-07-29T12:00:00.000Z",
+          sitePanoSettings: {
+            allowCaptureVisual: false,
+            allowCaptureThermal: true,
+            visualCaptureIntervalSeconds: 0,
+            thermalCaptureIntervalSeconds: 120,
+          },
+        };
+        const edge = {
+          id: "edge-1234567890",
+          from: "from-waypoint-123",
+          to: "to-waypoint-456",
+          source: "manual",
+          length: 1.25,
+          crossRecording: false,
+          settings: {
+            mobilityParams: {
+              velLimit: {maxVel: {
+                linear: {x: 0.5, y: 0.4}, angular: 0.3,
+              }},
+              bodyControl: {baseOffsetRtFootprint: {points: [{
+                pose: {position: {z: 0}},
+              }]}},
+              locomotionHint: 4,
+              stairsMode: 3,
+              disallowStairTracker: false,
+              swingHeight: 2,
+              obstacleParams: {obstacleAvoidancePadding: 0},
+              hazardDetectionMode: 2,
+              terrainParams: {groundMuHint: {value: 0.2}},
+            },
+            audioVisualSettings: {behaviorName: "crosswalk"},
+            directionConstraint: 4,
+            pathFollowingMode: 2,
+            disableAlternateRouteFinding: false,
+            disableDirectedExploration: true,
+            groundClutterMode: 2,
+            requireAlignment: {value: false},
+            flatGround: {value: true},
+            maxCorridorDistance: 0,
+            cost: {value: 0},
+            stairs: {state: 1},
+            overrideMobilityParams: {paths: ["locomotion_hint"]},
+            areaCallbacks: {"area-1": {serviceName: "spot-crosswalk"}},
+          },
+        };
+        const area = {
+          id: "area-1",
+          name: "North crossing",
+          type: "edge area callback",
+          edgeCount: 2,
+          callbackSettings: [
+            {serviceName: "spot-crosswalk", description: "North", recordedData: {
+              customParams: {values: {
+                speed: {doubleValue: 1}, enabled: {boolValue: true},
+              }},
+            }},
+            {serviceName: "spot-crosswalk", recordedData: {
+              customParams: {values: {
+                speed: {doubleValue: {value: 1.5}},
+              }},
+            }},
+          ],
+          edgeSettings: [
+            {mobilityParams: {velLimit: {maxVel: {linear: {x: 0.5}}},
+              locomotionHint: 4}, cost: {value: 0}},
+            {mobilityParams: {velLimit: {maxVel: {linear: {x: 0.8}}},
+              locomotionHint: 4}, cost: {value: 0}},
+          ],
+        };
+        const areaPreferences = overlay.defaults();
+        for (const key of Object.keys(areaPreferences.area.fields)) {
+          areaPreferences.area.fields[key] = false;
+        }
+        areaPreferences.area.fields.name = true;
+        areaPreferences.area.callbackFieldDefault = false;
+        areaPreferences.area.callbackFields[
+          "/recordedData/customParams/values/speed"
+        ] = true;
+        const missingPreferences = onlyArea("name");
+        missingPreferences.area.fields.name = false;
+        missingPreferences.area.callbackFields[
+          "/recordedData/customParams/values/enabled"
+        ] = true;
+        const collisionCallback = JSON.parse(JSON.stringify({
+          foo: {bar: 1},
+          "foo.bar": 2,
+          speed: 4,
+          recordedData: {customParams: {values: {speed: {doubleValue: 3}}}},
+        }).replace('"speed":{"doubleValue":3}',
+          '"speed":{"doubleValue":3},"__proto__":4'));
+        const collisionCatalog = overlay.areaCallbackFieldCatalog([{
+          callbackSettings: [collisionCallback],
+        }]);
+        const collisionPreferences = onlyArea("name");
+        collisionPreferences.area.fields.name = false;
+        collisionPreferences.area.callbackFields["/speed"] = true;
+        collisionPreferences.area.callbackFields[
+          "/recordedData/customParams/values/speed"
+        ] = true;
+        const orbitCallback = {
+          serviceName: "spot-crosswalk",
+          description: "Crosswalk",
+          behaviorOnTimeout: "Prevent Spot",
+          safetyDistance: 5,
+          timeout: 180,
+          recordedData: {parameters: {
+            specs: {
+              safety_distance: {
+                spec: {doubleSpec: {defaultValue: 5, minValue: 0, maxValue: 10}},
+                uiInfo: {description: "Distance", displayName: "Safety distance"},
+              },
+            },
+            values: {values: {
+              behavior_on_timeout: {stringValue: "Prevent Spot"},
+              safety_distance: {doubleValue: 5},
+              timeout: {intValue: 180},
+            }},
+          }},
+        };
+        const orbitCallbackCatalog = overlay.areaCallbackFieldCatalog([{
+          callbackSettings: [orbitCallback],
+        }]);
+        const longPrefix = "a".repeat(130);
+        const longCollisionCatalog = overlay.areaCallbackFieldCatalog([{
+          callbackSettings: [{
+            [`${longPrefix}x`]: 1,
+            [`${longPrefix}y`]: 2,
+          }],
+        }]);
+        const emptyPreferences = onlyArea("name");
+        emptyPreferences.area.fields.name = false;
+        emptyPreferences.area.callbackFields["/empty"] = true;
+        emptyPreferences.area.callbackFields["/items"] = true;
+        const emptyArea = {callbackSettings: [{empty: "", items: []}]};
+        const manyFields = Object.fromEntries(Array.from(
+          {length: 205}, (_, index) => [`field${String(index).padStart(3, "0")}`, index]
+        ));
+        const cappedCatalog = overlay.areaCallbackFieldCatalog([{
+          callbackSettings: [manyFields],
+        }]);
+        const unsafePreferences = overlay.normalizePreferences(JSON.parse(
+          '{"area":{"callbackFields":{"/safe":true,"/constructor":true,' +
+          '"/recordedData/parameters/specs/timeout/uiInfo/displayName":true}}}'
+        ));
+
+        const groups = overlay.CONTROL_GROUPS.map((group) => ({
+          id: group.id,
+          fields: group.sections.flatMap((section) =>
+            section.fields.map((field) => field.id)
+          ),
+        }));
+        process.stdout.write(JSON.stringify({
+          groups,
+          uniqueFields: groups.every((group) =>
+            group.fields.length === new Set(group.fields).size
+          ),
+          defaults,
+          legacy,
+          roundTripStable: JSON.stringify(legacy) === JSON.stringify(roundTrip),
+          waypoint: {
+            name: overlay.waypointParts(waypoint, only("waypoint", "name")),
+            id: overlay.waypointParts(waypoint, only("waypoint", "id")),
+            recording: overlay.waypointParts(waypoint, only("waypoint", "recording")),
+            degree: overlay.waypointParts(waypoint, only("waypoint", "degree")),
+            robot: overlay.waypointParts(waypoint, only("waypoint", "robot")),
+            timestamp: overlay.waypointParts(waypoint, only("waypoint", "timestamp")),
+            visual: overlay.waypointParts(waypoint, only("waypoint", "visualCapture")),
+            visualInterval: overlay.waypointParts(
+              waypoint, only("waypoint", "visualInterval")
+            ),
+            thermal: overlay.waypointParts(waypoint, only("waypoint", "thermalCapture")),
+            thermalInterval: overlay.waypointParts(
+              waypoint, only("waypoint", "thermalInterval")
+            ),
+          },
+          edge: {
+            speed: overlay.edgeParts(edge, only("edge", "speed")),
+            gait: overlay.edgeParts(edge, only("edge", "gait")),
+            bodyHeight: overlay.edgeParts(edge, only("edge", "bodyHeight")),
+            obstacle: overlay.edgeParts(edge, only("edge", "obstaclePadding")),
+            hazard: overlay.edgeParts(edge, only("edge", "hazardDetection")),
+            friction: overlay.edgeParts(edge, only("edge", "groundFriction")),
+            travel: overlay.edgeParts(edge, only("edge", "travelDirection")),
+            path: overlay.edgeParts(edge, only("edge", "pathFollowing")),
+            id: overlay.edgeParts(edge, only("edge", "id")),
+            from: overlay.edgeParts(edge, only("edge", "from")),
+            to: overlay.edgeParts(edge, only("edge", "to")),
+            source: overlay.edgeParts(edge, only("edge", "source")),
+            length: overlay.edgeParts(edge, only("edge", "length")),
+            crossRecording: overlay.edgeParts(edge, only("edge", "crossRecording")),
+            connectionDirection: overlay.edgeParts(
+              edge, only("edge", "connectionDirection")
+            ),
+            audioVisual: overlay.edgeParts(edge, only("edge", "audioVisual")),
+            alternate: overlay.edgeParts(edge, only("edge", "alternateRoute")),
+            directed: overlay.edgeParts(edge, only("edge", "directedExploration")),
+            groundClutter: overlay.edgeParts(edge, only("edge", "groundClutter")),
+            alignment: overlay.edgeParts(edge, only("edge", "alignment")),
+            flatGround: overlay.edgeParts(edge, only("edge", "flatGround")),
+            corridor: overlay.edgeParts(edge, only("edge", "corridorDistance")),
+            stairMode: overlay.edgeParts(edge, only("edge", "stairsMode")),
+            automaticStairs: overlay.edgeParts(edge, only("edge", "automaticStairs")),
+            stairAnnotation: overlay.edgeParts(edge, only("edge", "stairAnnotation")),
+            swingHeight: overlay.edgeParts(edge, only("edge", "swingHeight")),
+            mobilityOverride: overlay.edgeParts(edge, only("edge", "mobilityOverride")),
+            areaCallbacks: overlay.edgeParts(edge, only("edge", "areaCallbacks")),
+            stairsTogether: overlay.edgeParts(edge, onlyMany("edge", [
+              "stairsMode", "automaticStairs", "stairAnnotation",
+            ])),
+            cost: overlay.edgeParts(edge, only("edge", "cost")),
+            unset: overlay.edgeParts(
+              {settings: {}},
+              onlyMany("edge", [
+                "directedExploration", "alignment", "corridorDistance",
+              ]),
+            ),
+          },
+          areaCatalog: overlay.areaCallbackFieldCatalog([area]),
+          area: overlay.areaParts(area, areaPreferences),
+          areaMissing: overlay.areaParts(area, missingPreferences),
+          areaDescription: overlay.areaParts(area, onlyArea("description")),
+          areaEdgeSpeed: overlay.areaParts(area, onlyArea("edgeSpeed")),
+          areaEdgeGait: overlay.areaParts(area, onlyArea("edgeGait")),
+          areaEdgeCost: overlay.areaParts(area, onlyArea("edgeCost")),
+          areaIdentity: {
+            id: overlay.areaParts(area, onlyArea("id")),
+            type: overlay.areaParts(area, onlyArea("type")),
+            service: overlay.areaParts(area, onlyArea("service")),
+            edgeCount: overlay.areaParts(area, onlyArea("edgeCount")),
+          },
+          areaEdgeEvery: Object.fromEntries(
+            groups.find((group) => group.id === "area").fields
+              .filter((field) => field.startsWith("edge"))
+              .map((field) => [field, overlay.areaParts(
+                {...area, edgeSettings: [edge.settings]}, onlyArea(field)
+              )])
+          ),
+          collisionPaths: collisionCatalog.map((field) => field.path),
+          collisionLabels: collisionCatalog.map((field) => field.label),
+          collisionAreaParts: overlay.areaParts(
+            {callbackSettings: [collisionCallback]},
+            collisionPreferences,
+            new Map(collisionCatalog.map((field) => [field.path, field.label])),
+          ),
+          orbitCallbackCatalog,
+          orbitCallbackParts: (() => {
+            const preferences = onlyArea("name");
+            preferences.area.fields.name = false;
+            preferences.area.callbackFieldDefault = true;
+            return overlay.areaParts(
+              {callbackSettings: [orbitCallback]},
+              preferences,
+              new Map(orbitCallbackCatalog.map((field) => [field.path, field])),
+            );
+          })(),
+          longCollisionLabels: longCollisionCatalog.map((field) => field.label),
+          emptyArea: overlay.areaParts(emptyArea, emptyPreferences),
+          cappedCatalog: {length: cappedCatalog.length, truncated: cappedCatalog.truncated},
+          cappedParts: (() => {
+            const preferences = onlyArea("name");
+            preferences.area.fields.name = false;
+            preferences.area.callbackFieldDefault = true;
+            return overlay.areaParts(
+              {callbackSettings: [manyFields]},
+              preferences,
+              cappedCatalog.map((field) => field.path),
+            );
+          })(),
+          longStringMixed: (() => {
+            const preferences = onlyArea("name");
+            preferences.area.fields.name = false;
+            preferences.area.callbackFields["/note"] = true;
+            const prefix = "a".repeat(180);
+            return overlay.areaParts({callbackSettings: [
+              {note: `${prefix}x`}, {note: `${prefix}y`},
+            ]}, preferences);
+          })(),
+          tinyCostMixed: overlay.areaParts({edgeSettings: [
+            {cost: {value: 0.0001}}, {cost: {value: 0.0002}},
+          ]}, onlyArea("edgeCost")),
+          stairHintFallback: overlay.edgeParts(
+            {settings: {mobilityParams: {stairHint: true}}},
+            only("edge", "stairsMode"),
+          ),
+          unsafeEnum: overlay.edgeParts(
+            {settings: {mobilityParams: {locomotionHint: "__proto__"}}},
+            only("edge", "gait"),
+          ),
+          emptyPathLabel: overlay.areaCallbackFieldCatalog([{
+            callbackSettings: [{"": 1}],
+          }])[0].label,
+          storedCallbackCap: (() => {
+            const callbackFields = Object.fromEntries(Array.from(
+              {length: 1005}, (_, index) => [`/stored${index}`, true]
+            ));
+            const preferences = overlay.normalizePreferences({area: {callbackFields}});
+            const normalized = {
+              count: Object.keys(preferences.area.callbackFields).length,
+              firstPresent: Object.hasOwn(preferences.area.callbackFields, "/stored0"),
+              latest: preferences.area.callbackFields["/stored1004"],
+            };
+            overlay.setCallbackFieldPreference(preferences, "/redundant", false);
+            const redundant = {
+              count: Object.keys(preferences.area.callbackFields).length,
+              oldestRetained: preferences.area.callbackFields["/stored5"],
+              stored: Object.hasOwn(preferences.area.callbackFields, "/redundant"),
+            };
+            overlay.setCallbackFieldPreference(preferences, "/newest", true);
+            return {
+              normalized,
+              redundant,
+              countAfterInsert: Object.keys(preferences.area.callbackFields).length,
+              oldestRetained: Object.hasOwn(preferences.area.callbackFields, "/stored5"),
+              newest: preferences.area.callbackFields["/newest"],
+            };
+          })(),
+          unsafeCallbackFields: unsafePreferences.area.callbackFields,
+        }));
+        """
+    )
+    completed = subprocess.run(
+        [node, "--unhandled-rejections=strict", "-e", script],
+        cwd=Path.cwd(),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    result = json.loads(completed.stdout)
+
+    assert [group["id"] for group in result["groups"]] == [
+        "global",
+        "waypoint",
+        "edge",
+        "area",
+    ]
+    assert result["uniqueFields"] is True
+    assert "action" not in [group["id"] for group in result["groups"]]
+    group_fields = {group["id"]: set(group["fields"]) for group in result["groups"]}
+    assert group_fields["global"] == {"selection", "findings", "components"}
+    assert group_fields["waypoint"] == {
+        "name",
+        "id",
+        "recording",
+        "degree",
+        "robot",
+        "timestamp",
+        "visualCapture",
+        "visualInterval",
+        "thermalCapture",
+        "thermalInterval",
+    }
+    assert group_fields["edge"] == {
+        "connectionDirection",
+        "id",
+        "from",
+        "to",
+        "source",
+        "length",
+        "crossRecording",
+        "speed",
+        "bodyHeight",
+        "gait",
+        "audioVisual",
+        "pathFollowing",
+        "obstaclePadding",
+        "hazardDetection",
+        "groundFriction",
+        "travelDirection",
+        "stairsMode",
+        "automaticStairs",
+        "stairAnnotation",
+        "swingHeight",
+        "mobilityOverride",
+        "alternateRoute",
+        "directedExploration",
+        "groundClutter",
+        "alignment",
+        "flatGround",
+        "corridorDistance",
+        "cost",
+        "areaCallbacks",
+    }
+    assert group_fields["area"] == {
+        "name",
+        "id",
+        "type",
+        "service",
+        "description",
+        "edgeCount",
+        "edgeSpeed",
+        "edgeBodyHeight",
+        "edgeGait",
+        "edgeAudioVisual",
+        "edgePathFollowing",
+        "edgeObstaclePadding",
+        "edgeHazardDetection",
+        "edgeGroundFriction",
+        "edgeTravelDirection",
+        "edgeStairsMode",
+        "edgeAutomaticStairs",
+        "edgeStairAnnotation",
+        "edgeSwingHeight",
+        "edgeMobilityOverride",
+        "edgeAlternateRoute",
+        "edgeDirectedExploration",
+        "edgeGroundClutter",
+        "edgeAlignment",
+        "edgeFlatGround",
+        "edgeCorridorDistance",
+        "edgeCost",
+    }
+    assert result["defaults"]["area"]["enabled"] is False
+    assert result["defaults"]["area"]["callbackFieldDefault"] is False
+    assert result["legacy"]["global"] == {
+        "enabled": False,
+        "fields": {"selection": False, "findings": True, "components": True},
+    }
+    assert result["legacy"]["waypoint"]["fields"] == {
+        "name": False,
+        "id": True,
+        "recording": True,
+        "degree": False,
+        "robot": True,
+        "timestamp": True,
+        "visualCapture": False,
+        "visualInterval": False,
+        "thermalCapture": False,
+        "thermalInterval": False,
+    }
+    assert result["legacy"]["edge"]["enabled"] is False
+    assert result["legacy"]["edge"]["fields"]["connectionDirection"] is True
+    assert result["legacy"]["edge"]["fields"]["source"] is True
+    assert result["legacy"]["edge"]["fields"]["travelDirection"] is True
+    assert result["legacy"]["edge"]["fields"]["speed"] is False
+    assert result["legacy"]["edge"]["fields"]["gait"] is False
+    assert result["roundTripStable"] is True
+
+    assert result["waypoint"] == {
+        "name": ["North"],
+        "id": ["id waypoi…567890"],
+        "recording": ["recording Run 7"],
+        "degree": ["degree 3"],
+        "robot": ["robot Spot"],
+        "timestamp": ["time 2026-07-29T12:00:00.000Z"],
+        "visual": ["visual off"],
+        "visualInterval": ["visual interval 0 s"],
+        "thermal": ["thermal on"],
+        "thermalInterval": ["thermal interval 2 min"],
+    }
+    assert result["edge"] == {
+        "speed": ["speed x 0.5 / y 0.4 m/s · yaw 0.3 rad/s"],
+        "gait": ["gait Crawl"],
+        "bodyHeight": ["body height 0 m"],
+        "obstacle": ["obstacle cushion 0 m"],
+        "hazard": ["hazard On"],
+        "friction": ["ground friction 0.2"],
+        "travel": ["travel direction None"],
+        "path": ["path Strict"],
+        "id": ["id edge-1…567890"],
+        "from": ["from from-w…nt-123"],
+        "to": ["to to-way…nt-456"],
+        "source": ["source manual"],
+        "length": ["length 1.25 m"],
+        "crossRecording": ["cross-recording no"],
+        "connectionDirection": [],
+        "audioVisual": ["audio/visual crosswalk"],
+        "alternate": ["alternate route on"],
+        "directed": ["directed exploration off"],
+        "groundClutter": ["ground clutter From footfalls"],
+        "alignment": ["alignment off"],
+        "flatGround": ["flat ground on"],
+        "corridor": ["corridor 0 m"],
+        "stairMode": ["stairs Auto"],
+        "automaticStairs": ["automatic stairs on"],
+        "stairAnnotation": ["stair annotation Set"],
+        "swingHeight": ["swing height Medium"],
+        "mobilityOverride": ["override locomotion_hint"],
+        "areaCallbacks": ["Area callbacks 1"],
+        "stairsTogether": [
+            "stairs Auto",
+            "automatic stairs on",
+            "stair annotation Set",
+        ],
+        "cost": ["cost 0"],
+        "unset": [
+            "directed exploration not set",
+            "alignment not set",
+            "corridor not set",
+        ],
+    }
+    assert [field["path"] for field in result["areaCatalog"]] == [
+        "/recordedData/customParams/values/enabled",
+        "/recordedData/customParams/values/speed",
+    ]
+    assert result["area"] == ["North crossing", "callback speed=mixed (2)"]
+    assert result["areaMissing"] == ["callback enabled=mixed (2)"]
+    assert result["areaDescription"] == ["description mixed (2)"]
+    assert result["areaEdgeSpeed"] == ["edge speed mixed (2)"]
+    assert result["areaEdgeGait"] == ["edge gait Crawl"]
+    assert result["areaEdgeCost"] == ["edge cost 0"]
+    assert result["areaIdentity"] == {
+        "id": ["id area-1"],
+        "type": ["type edge area callback"],
+        "service": ["service spot-crosswalk"],
+        "edgeCount": ["edges 2"],
+    }
+    assert set(result["areaEdgeEvery"]) == {
+        field for field in group_fields["area"] if field.startswith("edge")
+    }
+    assert all(len(parts) == 1 for parts in result["areaEdgeEvery"].values())
+    assert set(result["collisionPaths"]) == {
+        "/foo.bar",
+        "/foo/bar",
+        "/recordedData/customParams/values/speed",
+    }
+    assert len(result["collisionLabels"]) == len(set(result["collisionLabels"]))
+    collision_labels_by_path = dict(
+        zip(result["collisionPaths"], result["collisionLabels"], strict=True)
+    )
+    assert {part.rsplit("=", 1)[0] for part in result["collisionAreaParts"]} == {
+        "callback " + collision_labels_by_path["/recordedData/customParams/values/speed"],
+    }
+    assert [field["label"] for field in result["orbitCallbackCatalog"]] == [
+        "behavior on timeout",
+        "safety distance",
+        "timeout",
+    ]
+    assert all("/specs/" not in field["path"] for field in result["orbitCallbackCatalog"])
+    assert result["orbitCallbackParts"] == [
+        "callback behavior on timeout=Prevent Spot",
+        "callback safety distance=5",
+        "callback timeout=180",
+    ]
+    assert len(result["longCollisionLabels"]) == 2
+    assert len(set(result["longCollisionLabels"])) == 2
+    assert result["emptyArea"] == ["callback empty=(empty)", "callback items=[]"]
+    assert result["cappedCatalog"] == {"length": 200, "truncated": True}
+    assert len(result["cappedParts"]) == 200
+    assert all("field204=" not in part for part in result["cappedParts"])
+    assert result["longStringMixed"] == ["callback note=mixed (2)"]
+    assert result["tinyCostMixed"] == ["edge cost mixed (2)"]
+    assert result["stairHintFallback"] == ["stairs On"]
+    assert result["unsafeEnum"] == ["gait Value __proto__"]
+    assert result["emptyPathLabel"] == "(empty key)"
+    assert result["storedCallbackCap"] == {
+        "normalized": {"count": 1000, "firstPresent": False, "latest": True},
+        "redundant": {"count": 1000, "oldestRetained": True, "stored": False},
+        "countAfterInsert": 1000,
+        "oldestRetained": False,
+        "newest": True,
+    }
+    assert result["unsafeCallbackFields"] == {"/safe": True}
+
+
+def test_area_settings_aggregate_labels_and_build_partial_or_full_batches() -> None:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for JavaScript Area-setting tests")
+    script = textwrap.dedent(
+        """
+        require("./extension/orbit-site-map-editor/area-settings.js");
+        const settings = OrbitSiteMapEditorAreaSettings;
+        const callback = (description, speed) => ({
+          serviceName: "spot-crosswalk",
+          description,
+          recordedData: {customParams: {values: {
+            speed: {doubleValue: speed},
+            enabled: {boolValue: true}
+          }}},
+          preserveMe: {nested: "yes"}
+        });
+        const snapshot = {
+          waypoints: [
+            {id: "a", position: {x: 0, y: 0, z: 0}},
+            {id: "b", position: {x: 2, y: 0, z: 0}},
+            {id: "c", position: {x: 4, y: 0, z: 0}}
+          ],
+          areas: [
+            {id: "area-a", name: "North crossing", waypointIds: []},
+            {id: "area-b", name: "South crossing", waypointIds: []},
+            {id: "catalog-only", name: "Catalog only", waypointIds: ["c"]}
+          ],
+          edges: [
+            {
+              id: "ab", from: "a", to: "b", sourceValue: 5,
+              settings: {stairs: false, areaCallbacks: {
+                "area-a": callback("North", 1),
+                "area-b": callback("South", 2)
+              }}
+            },
+            {
+              id: "bc", from: "b", to: "c", sourceValue: 5,
+              settings: {cost: 3, areaCallbacks: {
+                "area-a": callback("North alternate", 1.5)
+              }}
+            }
+          ]
+        };
+        const records = settings.records(snapshot);
+        const areaA = records.find((item) => item.id === "area-a");
+        const catalogOnly = records.find((item) => item.id === "catalog-only");
+        const patch = settings.parsePatch(JSON.stringify({
+          description: null,
+          recordedData: {customParams: {values: {
+            speed: {doubleValue: 0.75}
+          }}},
+          newFlag: true
+        }));
+        const merged = settings.updatePlan(snapshot, ["area-a", "area-b"], patch, "merge");
+        const replaced = settings.updatePlan(
+          snapshot,
+          ["area-b"],
+          {serviceName: "replacement", enabled: false},
+          "replace"
+        );
+        const edgeMerged = settings.updatePlan(
+          snapshot,
+          ["area-a"],
+          {stairs: true, cost: null},
+          "merge",
+          "edge"
+        );
+        process.stdout.write(JSON.stringify({
+          areaA: {
+            edgeCount: areaA.edgeCount,
+            variantCount: areaA.variantCount,
+            position: areaA.position,
+            summary: areaA.summary
+          },
+          catalogOnly: {
+            editable: catalogOnly.editable,
+            position: catalogOnly.position
+          },
+          merged: {
+            areaIds: merged.areaIds,
+            edgeCount: merged.edgeUpdates.length,
+            firstA: merged.edgeUpdates[0].desiredSettings.areaCallbacks["area-a"],
+            firstB: merged.edgeUpdates[0].desiredSettings.areaCallbacks["area-b"],
+            preservedStairs: merged.edgeUpdates[0].desiredSettings.stairs,
+            originalDescription:
+              snapshot.edges[0].settings.areaCallbacks["area-a"].description
+          },
+          replaced: {
+            edgeCount: replaced.edgeUpdates.length,
+            callback: replaced.edgeUpdates[0].desiredSettings.areaCallbacks["area-b"],
+            preservedSibling:
+              replaced.edgeUpdates[0].desiredSettings.areaCallbacks["area-a"].description
+          },
+          edgeMerged: {
+            edgeCount: edgeMerged.edgeUpdates.length,
+            firstStairs: edgeMerged.edgeUpdates[0].desiredSettings.stairs,
+            secondHasCost: Object.prototype.hasOwnProperty.call(
+              edgeMerged.edgeUpdates[1].desiredSettings,
+              "cost"
+            ),
+            callbackCount: Object.keys(
+              edgeMerged.edgeUpdates[0].desiredSettings.areaCallbacks
+            ).length
+          }
+        }));
+        """
+    )
+    completed = subprocess.run(
+        [node, "--unhandled-rejections=strict", "-e", script],
+        cwd=Path.cwd(),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    result = json.loads(completed.stdout)
+
+    assert result["areaA"]["edgeCount"] == 2
+    assert result["areaA"]["variantCount"] == 2
+    assert result["areaA"]["position"] == {"x": 2, "y": 0, "z": 0}
+    assert "crosswalk" in result["areaA"]["summary"]
+    assert "cost 3" in result["areaA"]["summary"]
+    assert result["catalogOnly"] == {
+        "editable": False,
+        "position": {"x": 4, "y": 0, "z": 0},
+    }
+    assert result["merged"]["areaIds"] == ["area-a", "area-b"]
+    assert result["merged"]["edgeCount"] == 2
+    assert "description" not in result["merged"]["firstA"]
+    assert result["merged"]["firstA"]["serviceName"] == "spot-crosswalk"
+    assert result["merged"]["firstA"]["preserveMe"] == {"nested": "yes"}
+    assert result["merged"]["firstA"]["newFlag"] is True
+    assert (
+        result["merged"]["firstA"]["recordedData"]["customParams"]["values"]["speed"]["doubleValue"]
+        == 0.75
+    )
+    assert result["merged"]["firstB"]["newFlag"] is True
+    assert result["merged"]["preservedStairs"] is False
+    assert result["merged"]["originalDescription"] == "North"
+    assert result["replaced"] == {
+        "edgeCount": 1,
+        "callback": {"serviceName": "replacement", "enabled": False},
+        "preservedSibling": "North",
+    }
+    assert result["edgeMerged"] == {
+        "edgeCount": 2,
+        "firstStairs": True,
+        "secondHasCost": False,
+        "callbackCount": 2,
+    }
+
+    areas_ui = (EXTENSION / "areas-ui.js").read_text(encoding="utf-8")
+    content = (EXTENSION / "content.js").read_text(encoding="utf-8")
+    assert 'tabButton.dataset.tab = "areas"' in areas_ui
+    assert 'value="selected">Checked Areas only' in areas_ui
+    assert 'value="all">All editable Areas' in areas_ui
+    assert 'value="merge">Merge listed fields (partial update)' in areas_ui
+    assert 'value="replace">Replace complete selected settings' in areas_ui
+    assert 'value="edge">Associated Edge settings (stairs, cost…)' in areas_ui
+    assert 'value="callback">Area callback (crosswalk…)' in areas_ui
+    assert "Current settings JSON" in areas_ui
+    assert 'runtime.requestBridge("update_edge_settings"' in areas_ui
+    assert "globalThis.OrbitSiteMapEditorAreas?.overlayState?.()" in content
+    assert "osme-area-label" in content
+    assert "tabButton.click()" not in areas_ui
+    assert "overlayEnabled" not in areas_ui
+    assert 'aria-label="Filter Areas"' in areas_ui
+    assert "elements.overlay.append(group, areaLabelGroup, actionNameGroup)" in content
+    assert "Object.prototype.hasOwnProperty.call(state.overlay, group)" in content
+    assert '"Show all values"' in content
+    assert '"Hide all values"' in content
+    assert "Filter Area callback parameters" in content
+    assert "Callback parameters" in content
+    assert "Orbit form specs, defaults, options, and UI metadata are hidden" in (
+        EXTENSION / "overlay-settings.js"
+    ).read_text(encoding="utf-8")
+    assert "setCallbackFieldPreference" in content
+    assert "hidden by Overall" in content
+    assert "allowedCallbackPaths" in content
+    assert "MAX_OVERLAY_AREA_SCAN" in content
+    assert "? `selected:${item.id}`" in content
+    assert "priorityLabels" in content
+    assert "WAYPOINT_LABEL_DENSITY_STEPS" in content
+    assert "EDGE_LABEL_DENSITY_STEPS" in content
+    assert "const AREA_LABEL_MIN_ZOOM = 0.8;" in content
+    assert "areaLabelsVisible && zoom >= AREA_LABEL_MIN_ZOOM" in content
+    assert "zoom >= 0.72 || selected || candidate" not in content
+    assert "zoom >= 1.2 || priority" not in content
+    assert "Same Edge settings, grouped by Area" in (EXTENSION / "overlay-settings.js").read_text(
+        encoding="utf-8"
+    )
+    assert 'lineAttributes["marker-end"] = "url(#osme-edge-arrow)"' in content
+    area_render = content[content.index("if (areaLabelsVisible && zoom >= AREA_LABEL_MIN_ZOOM)") :]
+    assert area_render.index("const parts = overlaySettings.areaParts") < area_render.index(
+        "const key = item.selected"
+    )
 
 
 def test_page_bridge_publishes_action_route_changes_and_restores_history() -> None:
@@ -990,6 +1806,34 @@ def test_connect_candidates_exclude_existing_and_rank_bounded_candidates() -> No
     assert all(item["id"] not in {"base", "neighbor", "far", "no-anchor"} for item in result)
 
 
+def test_connect_candidates_default_to_orbits_two_meter_limit() -> None:
+    result = run_model(
+        textwrap.dedent(
+            """
+            const snapshot = {
+              waypoints: [
+                {id: "base", position: {x: 0, y: 0, z: 0}},
+                {id: "at-limit", position: {x: 2, y: 0, z: 0}},
+                {id: "outside-limit", position: {x: 2.01, y: 0, z: 0}}
+              ],
+              edges: []
+            };
+            process.stdout.write(JSON.stringify({
+              defaultRadius: OrbitSiteMapEditorModel.DEFAULT_RADIUS_METERS,
+              candidateIds: OrbitSiteMapEditorModel
+                .connectionCandidates(snapshot, "base")
+                .map((item) => item.id)
+            }));
+            """
+        )
+    )
+
+    assert result == {
+        "defaultRadius": 2,
+        "candidateIds": ["at-limit"],
+    }
+
+
 def test_search_finds_exact_ids_names_recordings_and_edges() -> None:
     result = run_model(
         textwrap.dedent(
@@ -1119,9 +1963,28 @@ def test_editor_bridge_restores_validation_selection_and_adds_one_draft_step() -
                 };
                 setTimeout(() => {
                   const [fromWaypoint, toWaypoint] = [...selected].sort();
+                  const selectedKey = key(...selected);
                   state.mapEditor.info.pendingEdgeCreation = {
-                    errors: [],
-                    warnings: selected.includes("c") ? [{warning: true}] : [],
+                    errors: selectedKey === "a|c" ? [{
+                      alreadyExists: null,
+                      bridgesDisconnectedSubgraphs: null,
+                      collisionCheckFailed: null,
+                      edgeLength: {length: 2.794881780337234, maxLength: 2},
+                      gravityAlignmentFailed: null,
+                      heightChange: null,
+                      icpFailed: null,
+                    }, {
+                      alreadyExists: null,
+                      bridgesDisconnectedSubgraphs: null,
+                      collisionCheckFailed: true,
+                      edgeLength: null,
+                      gravityAlignmentFailed: null,
+                      heightChange: null,
+                      icpFailed: null,
+                    }] : [],
+                    warnings: selectedKey === "b|c" ? [{
+                      defaultMessage: "This edge crosses recording boundaries.",
+                    }] : [],
                     validating: false,
                     showModal: false,
                     createdEdgeCandidate: {
@@ -1203,10 +2066,24 @@ def test_editor_bridge_restores_validation_selection_and_adds_one_draft_step() -
           if (
             !warned?.ok ||
             warned.valid ||
-            warned.reason !== "edge_validation_warning" ||
+            warned.reason !== "edge_validation_failed" ||
+            warned.details?.join("|") !==
+              "Edge length 2.79 m exceeds Orbit's 2 m limit.|" +
+              "Orbit's collision check failed." ||
             state.mapEditor.info.selectedWaypointIds.join(",") !== "a" ||
             state.mapEditor.form.present.index !== 3
-          ) throw new Error(`warning did not fail closed: ${JSON.stringify(warned)}`);
+          ) throw new Error(`error detail was not preserved: ${JSON.stringify(warned)}`);
+
+          const warning = await request("warning", "validate_connect", ["b", "c"]);
+          if (
+            !warning?.ok ||
+            warning.valid ||
+            warning.reason !== "edge_validation_warning" ||
+            warning.details?.join("|") !==
+              "This edge crosses recording boundaries." ||
+            state.mapEditor.info.selectedWaypointIds.join(",") !== "a" ||
+            state.mapEditor.form.present.index !== 3
+          ) throw new Error(`warning detail was not preserved: ${JSON.stringify(warning)}`);
 
           const [connected, concurrent] = await Promise.all([
             request("connect", "connect", ["b", "a"]),
@@ -1263,6 +2140,8 @@ def test_editor_bridge_selects_and_creates_one_archive_or_settings_step() -> Non
         pytest.skip("node is required for JavaScript bridge tests")
     script = textwrap.dedent(
         """
+        require("./extension/orbit-site-map-editor/area-settings.js");
+        require("./extension/orbit-site-map-editor/overlay-settings.js");
         const mapId = "map-1";
         const key = (a, b) => a < b ? `${a}|${b}` : `${b}|${a}`;
         const edge = (fromWaypoint, toWaypoint, settings = {}) => ({
@@ -1273,13 +2152,31 @@ def test_editor_bridge_selects_and_creates_one_archive_or_settings_step() -> Non
             fromTformTo: {position: {x: 1, y: 0, z: 0}},
           },
         });
-        const waypoint = (id) => ({waypoint: {
-          id, annotations: {name: id}, waypointTformKo: {position: {x: 0, y: 0, z: 0}}
-        }});
+        const waypoint = (id) => ({
+          sitePanoSettings: id === "a" ? {
+            allowCaptureVisual: false,
+            allowCaptureThermal: true,
+            minTimeBetweenCaptureVisual: 0,
+            minTimeBetweenCaptureThermal: {seconds: 120},
+          } : undefined,
+          waypoint: {
+            id, annotations: {name: id}, waypointTformKo: {position: {x: 0, y: 0, z: 0}}
+          },
+        });
         const ab = edge("a", "b", {
           stairs: false,
+          mobilityParams: {
+            velLimit: {maxVel: {linear: {x: 0.5}}},
+            locomotionHint: 4,
+          },
           areaCallbacks: {
-            "area-2": {serviceName: "spot-crosswalk", description: "South crossing"}
+            "area-2": {
+              serviceName: "spot-crosswalk",
+              description: "South crossing",
+              recordedData: {customParams: {values: {
+                speed: {doubleValue: 0.6},
+              }}},
+            }
           }
         });
         const bc = edge("b", "c", {
@@ -1415,6 +2312,24 @@ def test_editor_bridge_selects_and_creates_one_archive_or_settings_step() -> Non
           const snapshot = await request("snapshot", "snapshot");
           const area1 = snapshot.snapshot.areas.find((area) => area.id === "area-1");
           const area2 = snapshot.snapshot.areas.find((area) => area.id === "area-2");
+          const waypointA = snapshot.snapshot.waypoints.find(
+            (waypoint) => waypoint.id === "a"
+          );
+          const derivedArea2 = OrbitSiteMapEditorAreaSettings
+            .records(snapshot.snapshot)
+            .find((area) => area.id === "area-2");
+          const pipelinePreferences = OrbitSiteMapEditorOverlaySettings.defaults();
+          for (const field of Object.keys(pipelinePreferences.area.fields)) {
+            pipelinePreferences.area.fields[field] = false;
+          }
+          pipelinePreferences.area.fields.edgeSpeed = true;
+          pipelinePreferences.area.callbackFields[
+            "/recordedData/customParams/values/speed"
+          ] = true;
+          const pipelineParts = OrbitSiteMapEditorOverlaySettings.areaParts(
+            derivedArea2,
+            pipelinePreferences,
+          );
           if (
             !snapshot.ok ||
             snapshot.snapshot.areas.length !== 2 ||
@@ -1427,6 +2342,12 @@ def test_editor_bridge_selects_and_creates_one_archive_or_settings_step() -> Non
             snapshot.snapshot.actions.length !== 1 ||
             Math.abs(snapshot.snapshot.actions[0].position?.x - 2) > 1e-9 ||
             Math.abs(snapshot.snapshot.actions[0].position?.y - 1) > 1e-9 ||
+            waypointA?.sitePanoSettings?.allowCaptureVisual !== false ||
+            waypointA?.sitePanoSettings?.allowCaptureThermal !== true ||
+            waypointA?.sitePanoSettings?.visualCaptureIntervalSeconds !== 0 ||
+            waypointA?.sitePanoSettings?.thermalCaptureIntervalSeconds !== 120 ||
+            pipelineParts.join("|") !==
+              "edge speed x 0.5 m/s|callback speed=0.6" ||
             !snapshot.snapshot.load.complete
           ) throw new Error(`catalog snapshot failed: ${JSON.stringify(snapshot)}`);
 
@@ -2173,6 +3094,7 @@ def test_content_marks_mutation_timeout_and_invalidation_as_ambiguous() -> None:
           documentElement,
           createElement: () => new FakeNode(),
           createElementNS: () => new FakeNode(),
+          createTextNode: (text) => ({textContent: text}),
           getElementById: () => null,
           querySelector: () => null,
         };
@@ -2219,6 +3141,8 @@ def test_content_marks_mutation_timeout_and_invalidation_as_ambiguous() -> None:
         require("./extension/orbit-site-map-editor/panel-layout.js");
         require("./extension/orbit-site-map-editor/model.js");
         require("./extension/orbit-site-map-editor/query.js");
+        require("./extension/orbit-site-map-editor/area-settings.js");
+        require("./extension/orbit-site-map-editor/overlay-settings.js");
         require("./extension/orbit-site-map-editor/content.js");
         const runtime = global.OrbitSiteMapEditorRuntime;
         const serial = (error) => ({

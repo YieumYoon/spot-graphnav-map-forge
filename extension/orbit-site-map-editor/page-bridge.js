@@ -887,7 +887,8 @@
 
     const waypoints = [];
     for (const id of waypointIds) {
-      const waypoint = waypointEntities[id]?.waypoint;
+      const waypointEntity = waypointEntities[id];
+      const waypoint = waypointEntity?.waypoint;
       if (!waypoint) continue;
       const recordingId = recordingByWaypoint.get(id) || "";
       const recording = recordingEntities[recordingId];
@@ -906,6 +907,7 @@
         robotSerial: recording?.robotSerial || "",
         degree: degree.get(id) || 0,
         edgeSources: sourceCounts.get(id) || {},
+        sitePanoSettings: waypointPanoSettings(waypointEntity),
       });
     }
 
@@ -1038,6 +1040,29 @@
     return (seconds || 0) + nanos / 1e9;
   }
 
+  function waypointPanoSettings(entity) {
+    const settings =
+      entity?.sitePanoSettings ||
+      entity?.siteWaypoint?.sitePanoSettings ||
+      entity?.waypoint?.sitePanoSettings ||
+      entity?.annotations?.sitePanoSettings;
+    if (!settings || typeof settings !== "object") return null;
+    return {
+      allowCaptureVisual: Boolean(settings.allowCaptureVisual),
+      allowCaptureThermal: Boolean(settings.allowCaptureThermal),
+      visualCaptureIntervalSeconds:
+        durationSeconds(
+          settings.minTimeBetweenCaptureVisual ??
+          settings.visualCaptureInterval,
+        ),
+      thermalCaptureIntervalSeconds:
+        durationSeconds(
+          settings.minTimeBetweenCaptureThermal ??
+          settings.thermalCaptureInterval,
+        ),
+    };
+  }
+
   function siteViewPlanningSnapshot(state, mapId) {
     const map = state?.siteMaps?.entities?.[mapId];
     if (!map) return null;
@@ -1054,26 +1079,11 @@
     for (const id of panoAdapter?.ids || []) {
       if (!mapWaypointIds.has(id)) continue;
       const entity = panoAdapter.entities[id];
-      const settings =
-        entity?.sitePanoSettings ||
-        entity?.siteWaypoint?.sitePanoSettings ||
-        entity?.waypoint?.sitePanoSettings ||
-        entity?.annotations?.sitePanoSettings;
-      if (!settings || typeof settings !== "object") continue;
+      const settings = waypointPanoSettings(entity);
+      if (!settings) continue;
       sitePanoWaypoints.push({
         waypointId: safeText(id, 256),
-        allowCaptureVisual: Boolean(settings.allowCaptureVisual),
-        allowCaptureThermal: Boolean(settings.allowCaptureThermal),
-        visualCaptureIntervalSeconds:
-          durationSeconds(
-            settings.minTimeBetweenCaptureVisual ||
-            settings.visualCaptureInterval,
-          ),
-        thermalCaptureIntervalSeconds:
-          durationSeconds(
-            settings.minTimeBetweenCaptureThermal ||
-            settings.thermalCaptureInterval,
-          ),
+        ...settings,
       });
     }
     sitePanoWaypoints.sort((left, right) =>
@@ -1205,6 +1215,98 @@
     };
   }
 
+  const VALIDATION_MESSAGE_KEYS = [
+    "defaultMessage",
+    "message",
+    "detail",
+    "reason",
+    "description",
+    "title",
+    "text",
+    "error",
+  ];
+
+  function cleanValidationMessage(value) {
+    return String(value || "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 300);
+  }
+
+  function formatValidationDistance(value) {
+    return Number(value).toFixed(2).replace(/\.00$/, "");
+  }
+
+  function knownValidationDetails(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+    const details = [];
+    if (value.alreadyExists) {
+      details.push("An edge already exists between these waypoints.");
+    }
+    if (value.bridgesDisconnectedSubgraphs) {
+      details.push("This edge would bridge disconnected subgraphs.");
+    }
+    if (value.collisionCheckFailed) {
+      details.push("Orbit's collision check failed.");
+    }
+    if (value.edgeLength) {
+      const length = Number(value.edgeLength.length);
+      const maxLength = Number(value.edgeLength.maxLength);
+      details.push(
+        Number.isFinite(length) && Number.isFinite(maxLength)
+          ? `Edge length ${formatValidationDistance(length)} m exceeds Orbit's ` +
+            `${formatValidationDistance(maxLength)} m limit.`
+          : "Edge length exceeds Orbit's limit.",
+      );
+    }
+    if (value.gravityAlignmentFailed) {
+      details.push("Gravity alignment check failed.");
+    }
+    if (value.heightChange) {
+      details.push("Height change exceeds Orbit's limit.");
+    }
+    if (value.icpFailed) {
+      details.push("ICP alignment failed.");
+    }
+    return details;
+  }
+
+  function validationDetails(value) {
+    const details = [];
+    const seen = new WeakSet();
+
+    function collect(item) {
+      if (details.length >= 3 || item === null || item === undefined) return;
+      if (typeof item === "string") {
+        const detail = cleanValidationMessage(item);
+        if (detail && !details.includes(detail)) details.push(detail);
+        return;
+      }
+      if (Array.isArray(item)) {
+        for (const child of item) collect(child);
+        return;
+      }
+      if (typeof item !== "object" || seen.has(item)) return;
+      seen.add(item);
+
+      for (const detail of knownValidationDetails(item)) {
+        if (details.length >= 3) return;
+        if (!details.includes(detail)) details.push(detail);
+      }
+
+      const detailCount = details.length;
+      for (const key of VALIDATION_MESSAGE_KEYS) {
+        if (Object.prototype.hasOwnProperty.call(item, key)) collect(item[key]);
+      }
+      if (details.length === detailCount) collect(item.props?.children);
+      if (details.length === detailCount) collect(item.code);
+      if (details.length === detailCount) collect(item.id);
+    }
+
+    collect(value);
+    return details;
+  }
+
   async function validatedEdgeCandidate(store, mapId, waypointIds) {
     if (!isCurrentBridge()) return { error: "bridge_disposed" };
     const initialState = store.getState();
@@ -1237,20 +1339,37 @@
       const pending = state?.mapEditor?.info?.pendingEdgeCreation || {};
       sawValidation ||= Boolean(pending.validating);
       const candidate = pending.createdEdgeCandidate;
+      const validationFinished = sawValidation && !pending.validating;
       const candidateReady =
         sameWaypointPair(candidate?.edge?.id, waypointIds) &&
         candidate?.siteMapId === mapId &&
         !pending.validating &&
         (candidate !== previous || sawValidation);
-      if (candidateReady) {
+      if (candidateReady || validationFinished) {
         if (!isCurrentBridge()) return { error: "bridge_disposed" };
-        if ((pending.errors || []).length) {
-          return { error: "edge_validation_failed" };
+        const errors = Array.isArray(pending.errors)
+          ? pending.errors
+          : pending.errors
+            ? [pending.errors]
+            : [];
+        const warnings = Array.isArray(pending.warnings)
+          ? pending.warnings
+          : pending.warnings
+            ? [pending.warnings]
+            : [];
+        if (errors.length) {
+          return {
+            error: "edge_validation_failed",
+            details: validationDetails(errors),
+          };
         }
-        if ((pending.warnings || []).length || pending.showModal) {
-          return { error: "edge_validation_warning" };
+        if (warnings.length || pending.showModal) {
+          return {
+            error: "edge_validation_warning",
+            details: validationDetails(warnings),
+          };
         }
-        return { candidate };
+        if (candidateReady) return { candidate };
       }
       await wait(50);
       if (!isCurrentBridge()) return { error: "bridge_disposed" };
@@ -1310,7 +1429,11 @@
       return { valid: false, error: "orbit_map_changed" };
     }
     if (!validation.candidate) {
-      return { valid: false, error: validation.error || "edge_validation_failed" };
+      return {
+        valid: false,
+        error: validation.error || "edge_validation_failed",
+        details: validation.details || [],
+      };
     }
     return { valid: true };
   }
@@ -2068,6 +2191,7 @@
           ok: true,
           valid: result.valid,
           reason: result.valid ? "" : result.error,
+          details: result.valid ? [] : result.details || [],
           adapter: "orbit-5.1-native-connect-validation",
         });
       } catch {

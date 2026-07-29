@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const DEFAULT_RADIUS_METERS = 12;
+  const DEFAULT_RADIUS_METERS = 2;
   const DEFAULT_CANDIDATE_LIMIT = 30;
 
   function edgeKey(from, to) {

@@ -1197,7 +1197,9 @@
           { waypointIds: item.waypointIds },
           18000,
         );
-        item.status = response.valid ? "validated" : `rejected: ${response.reason}`;
+        item.status = response.valid
+          ? "validated"
+          : runtime.validationFailureText(response.reason, response.details);
         message(
           response.valid ? "Orbit validated the queue pair; no draft was created." : item.status,
           response.valid ? "ok" : "warning",
@@ -1398,6 +1400,7 @@
       "action-names",
       "edit",
       "validate",
+      "areas",
       "walk",
     ];
     const preserveSelectedTab = validTabs.includes(tabSelectedWhileLoading);

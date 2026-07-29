@@ -15,6 +15,9 @@
   const MAX_NATIVE_VALIDATIONS = 12;
   const MAX_OVERLAY_WAYPOINTS = 350;
   const MAX_OVERLAY_EDGES = 750;
+  const MAX_OVERLAY_EDGE_LABELS = 150;
+  const MAX_OVERLAY_AREAS = 350;
+  const MAX_OVERLAY_AREA_SCAN = 5000;
   const MAX_WALK_OVERLAY_SEGMENTS = 3000;
   const MAX_WALK_OVERLAY_MARKERS = 500;
   const ACTION_NAME_LABEL_DENSITY_STEPS = [
@@ -24,6 +27,20 @@
     { maxZoom: 1.2, cellWidth: 72, cellHeight: 22 },
     { maxZoom: Infinity, cellWidth: 0, cellHeight: 0 },
   ];
+  const WAYPOINT_LABEL_DENSITY_STEPS = [
+    { maxZoom: 0.45, cellWidth: 190, cellHeight: 34 },
+    { maxZoom: 0.6, cellWidth: 140, cellHeight: 30 },
+    { maxZoom: 0.72, cellWidth: 100, cellHeight: 26 },
+    { maxZoom: Infinity, cellWidth: 0, cellHeight: 0 },
+  ];
+  const EDGE_LABEL_DENSITY_STEPS = [
+    { maxZoom: 0.55, cellWidth: 240, cellHeight: 40 },
+    { maxZoom: 0.75, cellWidth: 180, cellHeight: 34 },
+    { maxZoom: 1, cellWidth: 130, cellHeight: 28 },
+    { maxZoom: 1.2, cellWidth: 90, cellHeight: 24 },
+    { maxZoom: Infinity, cellWidth: 0, cellHeight: 0 },
+  ];
+  const AREA_LABEL_MIN_ZOOM = 0.8;
   const MUTATION_COMMANDS = new Set([
     "connect",
     "archive_edges",
@@ -34,8 +51,17 @@
   const panelLayout = globalThis.OrbitSiteMapEditorPanelLayout;
   const model = globalThis.OrbitSiteMapEditorModel;
   const queryEngine = globalThis.OrbitSiteMapEditorQuery;
+  const areaSettings = globalThis.OrbitSiteMapEditorAreaSettings;
+  const overlaySettings = globalThis.OrbitSiteMapEditorOverlaySettings;
 
-  if (!extensionContext || !panelLayout || !model || !queryEngine) return;
+  if (
+    !extensionContext ||
+    !panelLayout ||
+    !model ||
+    !queryEngine ||
+    !areaSettings ||
+    !overlaySettings
+  ) return;
   const instanceId =
     globalThis.crypto?.randomUUID?.() ||
     `osme-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -75,20 +101,7 @@
     connectingId: "",
     pendingConnectId: "",
     mutationUncertain: null,
-    overlay: {
-      detailed: true,
-      names: true,
-      ids: false,
-      recordings: false,
-      degree: true,
-      robot: false,
-      timestamps: false,
-      edges: true,
-      edgeDetails: false,
-      selection: true,
-      findings: true,
-      components: false,
-    },
+    overlay: overlaySettings.defaults(),
     lastOverlayKey: "",
     disposed: false,
   };
@@ -168,7 +181,7 @@
         </div>
         <div class="osme-connect-controls">
           <label>Radius
-            <input class="osme-radius" type="number" min="0.5" max="100" step="0.5" value="12">
+            <input class="osme-radius" type="number" min="0.5" max="100" step="0.5" value="2">
             <span>m</span>
           </label>
           <button class="osme-button osme-validate-visible" type="button">
@@ -193,20 +206,7 @@
         <div class="osme-section-heading">
           <div><span>VIEW</span><strong>Detailed overlay</strong></div>
         </div>
-        <div class="osme-overlay-controls">
-          <label><input type="checkbox" data-overlay="detailed" checked> Enabled</label>
-          <label><input type="checkbox" data-overlay="names" checked> Names</label>
-          <label><input type="checkbox" data-overlay="ids"> IDs</label>
-          <label><input type="checkbox" data-overlay="recordings"> Recordings</label>
-          <label><input type="checkbox" data-overlay="degree" checked> Degree</label>
-          <label><input type="checkbox" data-overlay="robot"> Robot</label>
-          <label><input type="checkbox" data-overlay="timestamps"> Timestamp</label>
-          <label><input type="checkbox" data-overlay="edges" checked> Edges</label>
-          <label><input type="checkbox" data-overlay="edgeDetails"> Edge details</label>
-          <label><input type="checkbox" data-overlay="selection" checked> Work selection</label>
-          <label><input type="checkbox" data-overlay="findings" checked> Findings</label>
-          <label><input type="checkbox" data-overlay="components"> Components</label>
-        </div>
+        <div class="osme-overlay-controls"></div>
       </section>
       <footer class="osme-footer">
         Validation is selection-only. Connect creates one unsaved native Orbit draft and never presses Save.
@@ -247,6 +247,12 @@
   let overlayAnimationId = null;
   let appliedPanelRail = "";
   let removeInvalidationListener = () => {};
+  let cachedAreaSnapshot = null;
+  let cachedAreaRecords = [];
+  let cachedAreaCatalogSnapshot = null;
+  let cachedAreaCatalog = [];
+
+  buildOverlayControls();
 
   function notifyOrbitViewportChanged() {
     window.requestAnimationFrame(() => {
@@ -513,6 +519,255 @@
     return element;
   }
 
+  function buildOverlayControls() {
+    elements.overlayControls.replaceChildren();
+    for (const group of overlaySettings.CONTROL_GROUPS) {
+      const details = create("details", "osme-overlay-group");
+      details.dataset.overlayGroupPanel = group.id;
+      details.open = group.id === "global" || group.id === "waypoint";
+      const summary = create("summary");
+      summary.append(
+        create("strong", "", group.label),
+        create("small", "osme-overlay-active-count"),
+      );
+      summary.querySelector("small").dataset.overlayCount = group.id;
+      const body = create("div", "osme-overlay-group-body");
+      const master = create("label", "osme-overlay-master");
+      const masterInput = document.createElement("input");
+      masterInput.type = "checkbox";
+      masterInput.dataset.overlayGroup = group.id;
+      masterInput.dataset.overlayEnabled = "true";
+      master.append(masterInput, document.createTextNode(group.masterLabel));
+      body.append(master);
+      body.append(create(
+        "small",
+        "osme-overlay-guidance",
+        group.guidance ||
+          "Choose values to show. Select a few fields at a time for a readable map.",
+      ));
+
+      if (group.id !== "global") {
+        const actions = create("div", "osme-overlay-value-actions");
+        for (const [action, label] of [
+          ["all", "Show all values"],
+          ["clear", "Hide all values"],
+        ]) {
+          const button = create("button", "osme-button osme-small", label);
+          button.type = "button";
+          button.dataset.overlayFieldsAction = action;
+          button.dataset.overlayGroup = group.id;
+          actions.append(button);
+        }
+        body.append(actions);
+      }
+
+      for (const section of group.sections) {
+        const fieldset = create("fieldset", "osme-overlay-fieldset");
+        fieldset.append(create("legend", "", section.label));
+        if (section.description) {
+          fieldset.append(create(
+            "small",
+            "osme-overlay-section-guidance",
+            section.description,
+          ));
+        }
+        const grid = create("div", "osme-overlay-field-grid");
+        for (const field of section.fields) {
+          const label = create("label");
+          const input = document.createElement("input");
+          input.type = "checkbox";
+          input.dataset.overlayGroup = group.id;
+          input.dataset.overlayField = field.id;
+          label.append(input, document.createTextNode(field.label));
+          grid.append(label);
+        }
+        fieldset.append(grid);
+        body.append(fieldset);
+      }
+
+      if (group.dynamicSectionLabel) {
+        const dynamic = create("details", "osme-overlay-dynamic-section");
+        const dynamicSummary = create("summary", "", group.dynamicSectionLabel);
+        dynamicSummary.dataset.overlayDynamicSummary = group.id;
+        dynamic.append(dynamicSummary);
+        const filter = document.createElement("input");
+        filter.type = "search";
+        filter.className = "osme-field osme-overlay-callback-filter";
+        filter.placeholder = "Filter callback parameters";
+        filter.setAttribute("aria-label", "Filter Area callback parameters");
+        filter.dataset.overlayCallbackFilter = group.id;
+        if (group.dynamicSectionDescription) {
+          dynamic.append(create(
+            "small",
+            "osme-overlay-section-guidance",
+            group.dynamicSectionDescription,
+          ));
+        }
+        const filterStatus = create("small", "osme-overlay-filter-status");
+        filterStatus.dataset.overlayCallbackFilterStatus = group.id;
+        filterStatus.setAttribute("aria-live", "polite");
+        const fieldset = create("fieldset", "osme-overlay-fieldset");
+        const grid = create("div", "osme-overlay-field-grid");
+        grid.dataset.overlayDynamicFields = group.id;
+        fieldset.append(grid);
+        dynamic.append(filter, filterStatus, fieldset);
+        body.append(dynamic);
+      }
+      details.append(summary, body);
+      elements.overlayControls.append(details);
+    }
+    syncOverlayControls();
+  }
+
+  function areaRecordsForOverlay() {
+    if (cachedAreaSnapshot === state.snapshot) return cachedAreaRecords;
+    cachedAreaSnapshot = state.snapshot;
+    cachedAreaRecords = state.snapshot ? areaSettings.records(state.snapshot) : [];
+    cachedAreaCatalogSnapshot = null;
+    return cachedAreaRecords;
+  }
+
+  function areaFieldCatalogForOverlay() {
+    const records = areaRecordsForOverlay();
+    if (cachedAreaCatalogSnapshot === state.snapshot) return cachedAreaCatalog;
+    cachedAreaCatalogSnapshot = state.snapshot;
+    cachedAreaCatalog = overlaySettings.areaCallbackFieldCatalog(
+      records,
+    );
+    return cachedAreaCatalog;
+  }
+
+  function syncAreaCallbackControls() {
+    const container = elements.overlayControls.querySelector(
+      '[data-overlay-dynamic-fields="area"]',
+    );
+    if (!container) return [];
+    const catalog = areaFieldCatalogForOverlay();
+    const catalogKey = JSON.stringify({
+      truncated: Boolean(catalog.truncated),
+      paths: catalog.map((field) => field.path),
+    });
+    if (container.dataset.catalogKey !== catalogKey) {
+      container.dataset.catalogKey = catalogKey;
+      container.replaceChildren();
+      if (!catalog.length) {
+        container.append(create(
+          "small",
+          "osme-overlay-empty-fields",
+          "No current callback parameters found in this map.",
+        ));
+      }
+      for (const field of catalog) {
+        const label = create("label");
+        label.title = field.path;
+        label.dataset.overlayCallbackField = "true";
+        label.dataset.overlaySearch = `${field.label} ${field.path}`.toLocaleLowerCase();
+        const input = document.createElement("input");
+        input.type = "checkbox";
+        input.dataset.overlayGroup = "area";
+        input.dataset.overlayCallbackPath = field.path;
+        input.setAttribute("aria-label", `${field.label}; callback path ${field.path}`);
+        label.append(input, document.createTextNode(field.label));
+        container.append(label);
+      }
+      if (catalog.truncated) {
+        container.append(create(
+          "small",
+          "osme-overlay-empty-fields",
+          `Showing the first ${catalog.length} callback parameters.`,
+        ));
+      }
+    }
+    filterAreaCallbackControls();
+    return catalog;
+  }
+
+  function filterAreaCallbackControls() {
+    const filter = elements.overlayControls.querySelector(
+      '[data-overlay-callback-filter="area"]',
+    );
+    const query = filter?.value.trim().toLocaleLowerCase() || "";
+    const labels = [...elements.overlayControls.querySelectorAll(
+      '[data-overlay-callback-field="true"]',
+    )];
+    let visible = 0;
+    let selected = 0;
+    for (const label of labels) {
+      label.hidden = Boolean(query && !label.dataset.overlaySearch.includes(query));
+      if (!label.hidden) visible += 1;
+      if (label.querySelector("input")?.checked) selected += 1;
+    }
+    const summary = elements.overlayControls.querySelector(
+      '[data-overlay-dynamic-summary="area"]',
+    );
+    if (summary) {
+      summary.textContent = `Callback parameters (${selected}/${labels.length} selected)`;
+    }
+    const status = elements.overlayControls.querySelector(
+      '[data-overlay-callback-filter-status="area"]',
+    );
+    if (status) {
+      status.textContent = query
+        ? `${visible} of ${labels.length} callback parameters match; ${selected} selected.`
+        : `${labels.length} callback parameters available; ${selected} selected.`;
+    }
+  }
+
+  function syncOverlayControls() {
+    const areaCatalog = syncAreaCallbackControls();
+    for (const input of elements.overlayControls.querySelectorAll(
+      "input[data-overlay-group]",
+    )) {
+      const group = input.dataset.overlayGroup;
+      if (input.dataset.overlayEnabled) {
+        input.checked = Boolean(state.overlay[group]?.enabled);
+      } else if (input.dataset.overlayField) {
+        input.checked = overlaySettings.fieldEnabled(
+          state.overlay,
+          group,
+          input.dataset.overlayField,
+        );
+      } else if (input.dataset.overlayCallbackPath) {
+        input.checked = overlaySettings.callbackFieldEnabled(
+          state.overlay,
+          input.dataset.overlayCallbackPath,
+        );
+      }
+    }
+    for (const group of overlaySettings.CONTROL_GROUPS) {
+      const fixedCount = group.sections
+        .flatMap((section) => section.fields)
+        .filter((field) => overlaySettings.fieldEnabled(
+          state.overlay,
+          group.id,
+          field.id,
+        )).length;
+      const dynamicCount = group.id === "area"
+        ? areaCatalog.filter((field) => overlaySettings.callbackFieldEnabled(
+            state.overlay,
+            field.path,
+          )).length
+        : 0;
+      const counter = elements.overlayControls.querySelector(
+        `[data-overlay-count="${group.id}"]`,
+      );
+      if (counter) {
+        const suppressed = group.id !== "global" && !state.overlay.global.enabled;
+        const enabled = state.overlay[group.id]?.enabled ? "On" : "Off";
+        const selectedCount = fixedCount + dynamicCount;
+        const selected = `${selectedCount} field${selectedCount === 1 ? "" : "s"} selected`;
+        counter.textContent = suppressed
+          ? `${enabled} · hidden by Overall · ${selected}`
+          : `${enabled} · ${selected}`;
+        counter.closest("details")?.classList.toggle(
+          "osme-overlay-suppressed",
+          suppressed,
+        );
+      }
+    }
+    filterAreaCallbackControls();
+  }
+
   function codeValue(value) {
     const code = create("code", "", String(value || "—"));
     code.title = String(value || "");
@@ -615,6 +870,16 @@
       orbit_snapshot_unavailable: "Live graph is unavailable",
     };
     return messages[code] || code.replaceAll("_", " ");
+  }
+
+  function validationFailureText(reason, details = []) {
+    const summary = friendlyError(reason);
+    const specifics = [...new Set(
+      (Array.isArray(details) ? details : [])
+        .map((detail) => String(detail || "").trim())
+        .filter((detail) => detail && detail !== summary),
+    )];
+    return specifics.length ? `${summary}: ${specifics.join(" · ")}` : summary;
   }
 
   function renderSummary() {
@@ -927,12 +1192,12 @@
         ),
       );
       const status = create(
-        "span",
+        "div",
         "osme-validation",
         validation.status === "valid"
           ? "validated"
           : validation.status === "rejected"
-            ? friendlyError(validation.reason)
+            ? validationFailureText(validation.reason, validation.details)
             : state.validatingId === candidate.id
               ? "validating…"
               : "not validated",
@@ -996,6 +1261,7 @@
     renderInspector();
     ensureValidationContext();
     renderConnect();
+    syncOverlayControls();
     state.lastOverlayKey = "";
   }
 
@@ -1074,12 +1340,14 @@
       state.validation.set(candidateId, {
         status: response.valid ? "valid" : "rejected",
         reason: response.reason || "",
+        details: Array.isArray(response.details) ? response.details : [],
       });
       return response.valid;
     } catch (error) {
       state.validation.set(candidateId, {
         status: "rejected",
         reason: error.message,
+        details: [],
       });
       if (error.mutationMayExist) throw error;
       return false;
@@ -1208,12 +1476,46 @@
     return hash;
   }
 
+  function boundedOverlayLabel(parts, maximum = 300) {
+    const full = parts.join(" · ");
+    if (full.length <= maximum) return { display: full, full };
+    const included = [];
+    for (const part of parts) {
+      const candidate = [...included, part].join(" · ");
+      if (candidate.length > maximum - 18) break;
+      included.push(part);
+    }
+    const hidden = parts.length - included.length;
+    const suffix = hidden > 0 ? ` · … (+${hidden})` : "…";
+    const display = included.length
+      ? `${included.join(" · ")}${suffix}`
+      : `${full.slice(0, maximum - 1)}…`;
+    return { display, full };
+  }
+
+  function setOverlayLabel(element, parts, maximum = 300) {
+    const summary = boundedOverlayLabel(parts, maximum);
+    element.textContent = summary.display;
+    if (summary.display !== summary.full) {
+      const title = svgElement("title");
+      title.textContent = summary.full.length > 2000
+        ? `${summary.full.slice(0, 1999)}…`
+        : summary.full;
+      element.append(title);
+    }
+    return summary.display;
+  }
+
   function recordingColor(recordingId) {
     return `hsl(${Math.abs(stableStringHash(recordingId)) % 360} 72% 58%)`;
   }
 
+  function labelDensity(steps, zoom) {
+    return steps.find((step) => zoom < step.maxZoom) || steps.at(-1);
+  }
+
   function actionNameLabelDensity(zoom) {
-    return ACTION_NAME_LABEL_DENSITY_STEPS.find((step) => zoom < step.maxZoom);
+    return labelDensity(ACTION_NAME_LABEL_DENSITY_STEPS, zoom);
   }
 
   function drawOverlay() {
@@ -1224,7 +1526,10 @@
     const advancedOverlay =
       globalThis.OrbitSiteMapEditorAdvanced?.overlayState?.() || {};
     const actionNameLabelsVisible = Boolean(advancedOverlay.actionNameLabelsVisible);
-    if (!state.overlay.detailed && !actionNameLabelsVisible) {
+    const areaOverlay = globalThis.OrbitSiteMapEditorAreas?.overlayState?.() || {};
+    const detailedVisible = Boolean(state.overlay.global.enabled);
+    const areaLabelsVisible = Boolean(detailedVisible && state.overlay.area.enabled);
+    if (!detailedVisible && !actionNameLabelsVisible) {
       elements.overlay.replaceChildren();
       return;
     }
@@ -1240,6 +1545,7 @@
       globalThis.OrbitSiteMapEditorWalk?.overlayState?.() || {};
     const advancedOverlayKey = String(advancedOverlay.revision || 0);
     const walkOverlayKey = String(walkOverlay.revision || 0);
+    const areaOverlayKey = String(areaOverlay.revision || 0);
     const overlayKey = [
       rect.left,
       rect.top,
@@ -1255,6 +1561,8 @@
       JSON.stringify(state.overlay),
       advancedOverlayKey,
       walkOverlayKey,
+      areaOverlayKey,
+      areaLabelsVisible,
     ].join("|");
     if (overlayKey === state.lastOverlayKey) return;
     state.lastOverlayKey = overlayKey;
@@ -1298,31 +1606,54 @@
     elements.overlay.append(definitions);
     const group = svgElement("g", {
       "clip-path": `url(#${clipId})`,
-      visibility: state.overlay.detailed ? "visible" : "hidden",
+      visibility: detailedVisible ? "visible" : "hidden",
     });
     const actionNameGroup = svgElement("g", { "clip-path": `url(#${clipId})` });
-    elements.overlay.append(group, actionNameGroup);
+    const areaLabelGroup = svgElement("g", { "clip-path": `url(#${clipId})` });
+    elements.overlay.append(group, areaLabelGroup, actionNameGroup);
     const liveGraph = graph();
     const workWaypointIds = new Set(
-      state.overlay.selection ? advancedOverlay.selection?.waypointIds || [] : [],
+      state.overlay.global.fields.selection
+        ? advancedOverlay.selection?.waypointIds || []
+        : [],
     );
     const workEdgeIds = new Set(
-      state.overlay.selection ? advancedOverlay.selection?.edgeIds || [] : [],
+      state.overlay.global.fields.selection
+        ? advancedOverlay.selection?.edgeIds || []
+        : [],
     );
     const findingWaypointIds = new Set(
-      state.overlay.findings ? advancedOverlay.findingWaypointIds || [] : [],
+      state.overlay.global.fields.findings
+        ? advancedOverlay.findingWaypointIds || []
+        : [],
     );
     const findingEdgeIds = new Set(
-      state.overlay.findings ? advancedOverlay.findingEdgeIds || [] : [],
+      state.overlay.global.fields.findings
+        ? advancedOverlay.findingEdgeIds || []
+        : [],
     );
-    const componentByWaypoint = state.overlay.components
+    const componentByWaypoint = state.overlay.global.fields.components
       ? globalThis.OrbitSiteMapEditorValidation?.topology?.(state.snapshot)
           ?.componentByWaypoint || new Map()
       : new Map();
+    const selectedEdgeIds = new Set(state.snapshot.selectedEdgeIds || []);
+    const edgeFlags = (edge) => {
+      const id = edge.id || model.edgeKey(edge.from, edge.to);
+      const key = model.edgeKey(edge.from, edge.to);
+      const selected = selectedEdgeIds.has(id) || selectedEdgeIds.has(key);
+      const work = workEdgeIds.has(id) || workEdgeIds.has(key);
+      const finding = findingEdgeIds.has(id) || findingEdgeIds.has(key);
+      return { finding, id, priority: selected || work || finding, selected, work };
+    };
 
-    if (state.overlay.edges) {
+    if (state.overlay.edge.enabled) {
       let drawnEdges = 0;
-      for (const edge of state.snapshot.edges) {
+      const edgeLabelDensity = labelDensity(EDGE_LABEL_DENSITY_STEPS, zoom);
+      const edgeLabelCandidatesByCell = new Map();
+      const orderedEdges = [...state.snapshot.edges].sort((left, right) =>
+        Number(edgeFlags(right).priority) - Number(edgeFlags(left).priority)
+      );
+      for (const edge of orderedEdges) {
         if (drawnEdges >= MAX_OVERLAY_EDGES) break;
         const fromPosition = liveGraph.waypointById.get(edge.from)?.position;
         const toPosition = liveGraph.waypointById.get(edge.to)?.position;
@@ -1332,13 +1663,11 @@
         const from = project(fromPosition);
         const to = project(toPosition);
         if (!inside(from, 80) && !inside(to, 80)) continue;
-        const settings = model.importantSettings(edge.settings);
-        const id = edge.id || model.edgeKey(edge.from, edge.to);
+        const { finding, id, priority, work } = edgeFlags(edge);
         const color =
-          workEdgeIds.has(id) || workEdgeIds.has(model.edgeKey(edge.from, edge.to))
+          work
             ? "#fbbf24"
-            : findingEdgeIds.has(id) ||
-                findingEdgeIds.has(model.edgeKey(edge.from, edge.to))
+            : finding
               ? "#fb7185"
               : edge.manual
                 ? "#2dd4bf"
@@ -1352,27 +1681,66 @@
           y2: to.y,
           stroke: color,
           "stroke-width":
-            workEdgeIds.has(id) || findingEdgeIds.has(id)
+            work || finding
               ? 3
               : edge.manual ? 2.4 : 1.4,
           opacity: edge.manual ? 0.82 : 0.46,
         };
-        if (state.overlay.edgeDetails) {
+        if (state.overlay.edge.fields.connectionDirection) {
           lineAttributes["marker-end"] = "url(#osme-edge-arrow)";
         }
         group.append(svgElement("line", lineAttributes));
-        if (state.overlay.edgeDetails && zoom >= 1.2 && drawnEdges < 150) {
-          const text = svgElement("text", {
+        const labelParts = overlaySettings.edgeParts(edge, state.overlay);
+        if (labelParts.length) {
+          const point = {
             x: (from.x + to.x) / 2,
             y: (from.y + to.y) / 2 - 4,
-            class: "osme-map-label osme-edge-label",
-          });
-          text.textContent =
-            edge.source + (settings.length ? ` · ${settings.join(", ")}` : "");
-          group.append(text);
+          };
+          const key = priority
+            ? `priority:${id}`
+            : edgeLabelDensity.cellWidth
+              ? `cell:${Math.floor((point.x - rect.left) /
+                  edgeLabelDensity.cellWidth)}:` +
+                `${Math.floor((point.y - rect.top) /
+                  edgeLabelDensity.cellHeight)}`
+              : `edge:${id}`;
+          const candidate = {
+            id,
+            labelParts,
+            point,
+            priority,
+            rank: stableStringHash(id) >>> 0,
+          };
+          const previous = edgeLabelCandidatesByCell.get(key);
+          if (!previous || candidate.rank < previous.rank) {
+            edgeLabelCandidatesByCell.set(key, candidate);
+          }
         }
         drawnEdges += 1;
       }
+      const priorityLabels = [];
+      const regularLabels = [];
+      const edgeLabelCandidates = [...edgeLabelCandidatesByCell.values()].sort(
+        (left, right) =>
+          Number(right.priority) - Number(left.priority) ||
+          left.point.y - right.point.y ||
+          left.point.x - right.point.x,
+      );
+      for (const candidate of edgeLabelCandidates) {
+        if (!candidate.priority && regularLabels.length >= MAX_OVERLAY_EDGE_LABELS) {
+          continue;
+        }
+        const text = svgElement("text", {
+          x: candidate.point.x,
+          y: candidate.point.y,
+          class: "osme-map-label osme-edge-label",
+        });
+        setOverlayLabel(text, candidate.labelParts);
+        if (candidate.priority) priorityLabels.push(text);
+        else regularLabels.push(text);
+      }
+      group.append(...regularLabels);
+      group.append(...priorityLabels);
     }
 
     function drawWaypointRoute(
@@ -1492,76 +1860,101 @@
       }
     }
 
-    let drawnWaypoints = 0;
-    for (const waypoint of state.snapshot.waypoints) {
-      if (
-        drawnWaypoints >= MAX_OVERLAY_WAYPOINTS ||
-        !model.finitePosition(waypoint.position)
-      ) continue;
-      const point = project(waypoint.position);
-      if (!inside(point)) continue;
-      const candidate = candidateById.get(waypoint.id);
-      const validation = candidateStatus(waypoint.id);
-      const selected = state.snapshot.selectedWaypointIds.includes(waypoint.id);
-      const componentIndex = componentByWaypoint.get(waypoint.id);
-      const color = selected
-        ? "#fbbf24"
-        : workWaypointIds.has(waypoint.id)
-          ? "#38bdf8"
-          : findingWaypointIds.has(waypoint.id)
-            ? "#fb7185"
-        : candidate
-          ? validation.status === "valid"
-            ? "#34d399"
-            : validation.status === "rejected"
-              ? "#fb7185"
-              : "#cbd5e1"
-          : Number.isInteger(componentIndex)
-            ? recordingColor(`component-${componentIndex}`)
-            : recordingColor(waypoint.recordingId);
-      group.append(
-        svgElement("circle", {
-          cx: point.x,
-          cy: point.y,
-          r:
-            selected ? 7
-            : workWaypointIds.has(waypoint.id) || findingWaypointIds.has(waypoint.id)
-              ? 5.5
-              : candidate ? 5.5 : 3,
-          fill: color,
-          stroke: "#07111d",
-          "stroke-width": selected || candidate ? 2 : 1,
-          opacity: selected || candidate ? 1 : 0.76,
-        }),
+    if (state.overlay.waypoint.enabled) {
+      let drawnWaypoints = 0;
+      const selectedWaypointIds = new Set(state.snapshot.selectedWaypointIds || []);
+      const waypointLabelDensity = labelDensity(WAYPOINT_LABEL_DENSITY_STEPS, zoom);
+      const waypointLabelCandidatesByCell = new Map();
+      const waypointPriority = (waypoint) =>
+        selectedWaypointIds.has(waypoint.id) ||
+        candidateById.has(waypoint.id) ||
+        workWaypointIds.has(waypoint.id) ||
+        findingWaypointIds.has(waypoint.id);
+      const orderedWaypoints = [...state.snapshot.waypoints].sort((left, right) =>
+        Number(waypointPriority(right)) - Number(waypointPriority(left))
       );
-      if (zoom >= 0.72 || selected || candidate) {
-        const parts = [];
-        if (state.overlay.names && waypoint.name) parts.push(waypoint.name);
-        if (state.overlay.ids) parts.push(model.shortId(waypoint.id, 6));
-        if (state.overlay.recordings) {
-          parts.push(waypoint.recordingName || model.shortId(waypoint.recordingId, 5));
-        }
-        if (state.overlay.degree) parts.push(`d${waypoint.degree ?? 0}`);
-        if (state.overlay.robot) {
-          parts.push(waypoint.robotNickname || waypoint.robotSerial || "robot —");
-        }
-        if (state.overlay.timestamps) {
-          const timestamp = typeof waypoint.creationTime === "string"
-            ? waypoint.creationTime
-            : JSON.stringify(waypoint.creationTime || "");
-          if (timestamp) parts.push(timestamp);
-        }
+      for (const waypoint of orderedWaypoints) {
+        if (
+          drawnWaypoints >= MAX_OVERLAY_WAYPOINTS ||
+          !model.finitePosition(waypoint.position)
+        ) continue;
+        const point = project(waypoint.position);
+        if (!inside(point)) continue;
+        const candidate = candidateById.get(waypoint.id);
+        const validation = candidateStatus(waypoint.id);
+        const selected = selectedWaypointIds.has(waypoint.id);
+        const priority = waypointPriority(waypoint);
+        const componentIndex = componentByWaypoint.get(waypoint.id);
+        const color = selected
+          ? "#fbbf24"
+          : workWaypointIds.has(waypoint.id)
+            ? "#38bdf8"
+            : findingWaypointIds.has(waypoint.id)
+              ? "#fb7185"
+          : candidate
+            ? validation.status === "valid"
+              ? "#34d399"
+              : validation.status === "rejected"
+                ? "#fb7185"
+                : "#cbd5e1"
+            : Number.isInteger(componentIndex)
+              ? recordingColor(`component-${componentIndex}`)
+              : recordingColor(waypoint.recordingId);
+        group.append(
+          svgElement("circle", {
+            cx: point.x,
+            cy: point.y,
+            r:
+              selected ? 7
+              : workWaypointIds.has(waypoint.id) || findingWaypointIds.has(waypoint.id)
+                ? 5.5
+                : candidate ? 5.5 : 3,
+            fill: color,
+            stroke: "#07111d",
+            "stroke-width": selected || candidate ? 2 : 1,
+            opacity: selected || candidate ? 1 : 0.76,
+          }),
+        );
+        const parts = overlaySettings.waypointParts(waypoint, state.overlay);
         if (parts.length) {
-          const label = svgElement("text", {
-            x: point.x + 8,
-            y: point.y - 7,
-            class: "osme-map-label",
-          });
-          label.textContent = parts.join(" · ");
-          group.append(label);
+          const labelPoint = { x: point.x + 8, y: point.y - 7 };
+          const key = priority
+            ? `priority:${waypoint.id}`
+            : waypointLabelDensity.cellWidth
+              ? `cell:${Math.floor((labelPoint.x - rect.left) /
+                  waypointLabelDensity.cellWidth)}:` +
+                `${Math.floor((labelPoint.y - rect.top) /
+                  waypointLabelDensity.cellHeight)}`
+              : `waypoint:${waypoint.id}`;
+          const labelCandidate = {
+            id: waypoint.id,
+            parts,
+            point: labelPoint,
+            priority,
+            rank: stableStringHash(waypoint.id) >>> 0,
+          };
+          const previous = waypointLabelCandidatesByCell.get(key);
+          if (!previous || labelCandidate.rank < previous.rank) {
+            waypointLabelCandidatesByCell.set(key, labelCandidate);
+          }
         }
+        drawnWaypoints += 1;
       }
-      drawnWaypoints += 1;
+      const waypointLabels = [...waypointLabelCandidatesByCell.values()].sort(
+        (left, right) =>
+          Number(left.priority) - Number(right.priority) ||
+          left.point.y - right.point.y ||
+          left.point.x - right.point.x,
+      );
+      for (const candidate of waypointLabels) {
+        const label = svgElement("text", {
+          x: candidate.point.x,
+          y: candidate.point.y,
+          class: "osme-map-label",
+        });
+        setOverlayLabel(label, candidate.parts);
+        group.append(label);
+      }
     }
 
     const actionLabelDensity = actionNameLabelDensity(zoom);
@@ -1617,6 +2010,94 @@
       });
       label.textContent = displayName;
       actionNameGroup.append(label);
+    }
+
+    if (areaLabelsVisible && zoom >= AREA_LABEL_MIN_ZOOM) {
+      const areaCandidatesByCell = new Map();
+      const selectedAreaIds = new Set(areaOverlay.selectedIds || []);
+      const cellWidth = zoom < 1.25 ? 190 : zoom < 1.5 ? 140 : 0;
+      const cellHeight = zoom < 1.25 ? 38 : zoom < 1.5 ? 30 : 0;
+      const areaRecords = [...areaRecordsForOverlay()].sort((left, right) =>
+        Number(selectedAreaIds.has(right.id)) - Number(selectedAreaIds.has(left.id)) ||
+        left.id.localeCompare(right.id)
+      );
+      const allowedCallbackPaths = new Map(
+        areaFieldCatalogForOverlay().map((field) => [field.path, field]),
+      );
+      let scannedAreas = 0;
+      for (const area of areaRecords) {
+        const item = {
+          ...area,
+          selected: selectedAreaIds.has(area.id),
+        };
+        if (!model.finitePosition(item.position)) continue;
+        const point = project(item.position);
+        if (!inside(point, 80)) continue;
+        if (scannedAreas >= MAX_OVERLAY_AREA_SCAN) break;
+        scannedAreas += 1;
+        const parts = overlaySettings.areaParts(
+          item,
+          state.overlay,
+          allowedCallbackPaths,
+        );
+        if (!parts.length) continue;
+        const key = item.selected
+          ? `selected:${item.id}`
+          : cellWidth
+            ? `cell:${Math.floor((point.x - rect.left) / cellWidth)}:` +
+              `${Math.floor((point.y - rect.top) / cellHeight)}`
+            : `area:${item.id}`;
+        const candidate = {
+          item,
+          parts,
+          point,
+          rank: item.selected ? -1 : stableStringHash(item.id) >>> 0,
+        };
+        const previous = areaCandidatesByCell.get(key);
+        if (!previous || candidate.rank < previous.rank) {
+          areaCandidatesByCell.set(key, candidate);
+        }
+      }
+      const areaCandidates = [...areaCandidatesByCell.values()]
+        .sort((left, right) =>
+          Number(right.item.selected) - Number(left.item.selected) ||
+          left.point.y - right.point.y ||
+          left.point.x - right.point.x
+        )
+        .slice(0, MAX_OVERLAY_AREAS);
+      for (const { item, parts, point } of areaCandidates) {
+        const summary = boundedOverlayLabel(parts);
+        const display = summary.display;
+        if (!display) continue;
+        const x = point.x + 9;
+        const y = point.y - 9;
+        areaLabelGroup.append(svgElement("circle", {
+          cx: point.x,
+          cy: point.y,
+          r: item.selected ? 6 : 4,
+          class: item.selected
+            ? "osme-area-label-marker osme-area-label-marker-selected"
+            : "osme-area-label-marker",
+        }));
+        const width = Math.min(620, Math.max(86, display.length * 5.6 + 14));
+        areaLabelGroup.append(svgElement("rect", {
+          x: x - 4,
+          y: y - 10,
+          width,
+          height: 15,
+          rx: 3,
+          class: item.selected
+            ? "osme-area-label-bg osme-area-label-bg-selected"
+            : "osme-area-label-bg",
+        }));
+        const label = svgElement("text", {
+          x,
+          y,
+          class: "osme-area-label",
+        });
+        setOverlayLabel(label, parts);
+        areaLabelGroup.append(label);
+      }
     }
 
     let exclusionMarkers = 0;
@@ -1754,10 +2235,59 @@
     if (state.pendingConnectId) connectCandidate(state.pendingConnectId);
   });
   elements.overlayControls.addEventListener("change", (event) => {
-    const key = event.target?.dataset?.overlay;
-    if (!key || !Object.prototype.hasOwnProperty.call(state.overlay, key)) return;
-    state.overlay[key] = Boolean(event.target.checked);
+    const input = event.target?.closest("input[data-overlay-group]");
+    const group = input?.dataset.overlayGroup;
+    if (
+      !input ||
+      !Object.prototype.hasOwnProperty.call(state.overlay, group) ||
+      !state.overlay[group]
+    ) return;
+    if (input.dataset.overlayEnabled) {
+      state.overlay[group].enabled = Boolean(input.checked);
+    } else if (
+      input.dataset.overlayField &&
+      Object.prototype.hasOwnProperty.call(
+        state.overlay[group].fields,
+        input.dataset.overlayField,
+      )
+    ) {
+      state.overlay[group].fields[input.dataset.overlayField] = Boolean(input.checked);
+    } else if (group === "area" && input.dataset.overlayCallbackPath) {
+      const path = input.dataset.overlayCallbackPath;
+      if (!areaFieldCatalogForOverlay().some((field) => field.path === path)) return;
+      if (!overlaySettings.setCallbackFieldPreference(
+        state.overlay,
+        path,
+        Boolean(input.checked),
+      )) return;
+    } else return;
     state.lastOverlayKey = "";
+    syncOverlayControls();
+    persist();
+  });
+  elements.overlayControls.addEventListener("input", (event) => {
+    if (event.target?.matches?.('[data-overlay-callback-filter="area"]')) {
+      filterAreaCallbackControls();
+    }
+  });
+  elements.overlayControls.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-overlay-fields-action]");
+    if (!button) return;
+    const group = button.dataset.overlayGroup;
+    const descriptor = overlaySettings.CONTROL_GROUPS.find(
+      (item) => item.id === group,
+    );
+    if (!descriptor || !state.overlay[group]) return;
+    const enabled = button.dataset.overlayFieldsAction === "all";
+    for (const field of descriptor.sections.flatMap((section) => section.fields)) {
+      state.overlay[group].fields[field.id] = enabled;
+    }
+    if (group === "area") {
+      state.overlay.area.callbackFieldDefault = enabled;
+      state.overlay.area.callbackFields = {};
+    }
+    state.lastOverlayKey = "";
+    syncOverlayControls();
     persist();
   });
   elements.searchResults.addEventListener("click", (event) => {
@@ -1785,7 +2315,10 @@
         setStatus(
           valid
             ? "Orbit validated this pair. No draft was created."
-            : friendlyError(candidateStatus(candidateId).reason),
+            : validationFailureText(
+              candidateStatus(candidateId).reason,
+              candidateStatus(candidateId).details,
+            ),
           valid ? "ok" : "warning",
         );
         render();
@@ -1876,11 +2409,9 @@
     ) state.searchSortBy = stored.searchSortBy;
     state.searchDescending = Boolean(stored.searchDescending);
     if (stored.overlay && typeof stored.overlay === "object") {
-      state.overlay = { ...state.overlay, ...stored.overlay };
+      state.overlay = overlaySettings.normalizePreferences(stored.overlay);
     }
-    for (const input of elements.overlayControls.querySelectorAll("[data-overlay]")) {
-      input.checked = Boolean(state.overlay[input.dataset.overlay]);
-    }
+    syncOverlayControls();
     render();
     if (!extensionContext.isActive()) {
       setStatus(
@@ -1917,6 +2448,7 @@
   }
 
   globalThis.OrbitSiteMapEditorRuntime = Object.freeze({
+    areaRecords: areaRecordsForOverlay,
     currentMapId,
     dispose,
     disposeEvent: DISPOSE_EVENT,
@@ -1934,6 +2466,7 @@
     setStatus,
     state,
     unverifiedMutationGuidance,
+    validationFailureText,
   });
 
   initialize();

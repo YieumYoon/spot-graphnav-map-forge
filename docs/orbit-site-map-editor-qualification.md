@@ -8,11 +8,12 @@ identifiers.
 
 - Orbit Site Map editor: 5.1 series
 - Extension: `extension/orbit-site-map-editor`
-- Extension release: `0.12.4`
+- Extension release: 0.14.2
 - Native edit adapter baseline: 0.2.2
 - Migration Assistant extension: `extension/orbit-graph-repair`
 - Migration Assistant release: 0.8.1
-- Current-build static qualification date: 2026-07-27
+- Current-build static qualification date: 2026-07-29
+- Latest live read-only validation-reason qualification date: 2026-07-27
 - Latest live mutation qualification date: 2026-07-24
 
 Re-run the complete checklist after an Orbit upgrade or an adapter action-name change.
@@ -47,6 +48,24 @@ One validated candidate passed all of these checks in the live Orbit editor:
    **Save** again.
 
 Result: **passed**. Orbit **Save** was never pressed.
+
+## 0.12.5 Connect validation-reason probe — passed
+
+The 0.12.5 panel and package-matching page bridge were exercised read-only against an authenticated
+Orbit 5.1 editor. A temporary page-bridge injection was used because the live Chrome extension
+management page was not available to the automation session; an Orbit reload removed the temporary
+bridge after the probe.
+
+- Four nearby candidates produced one valid pair and three explicit native rejections.
+- Orbit's structured `edgeLength` and `collisionCheckFailed` results rendered as readable distance
+  limits and collision-check reasons on every rejected candidate card.
+- Only the valid candidate enabled **Connect**; all rejected candidates kept it disabled.
+- Validation restored the original waypoint selection and created no draft.
+- Orbit **Save** and **Cancel** remained disabled, exactly one Editor panel remained, and the final
+  page reload restored the installed 0.12.5 panel with no temporary bridge state.
+
+Result: **passed** for the live read-only structured-reason path. The unpacked extension still needs
+the normal extension-first, Orbit-second reload to install the finalized source after this probe.
 
 Use the same five checks for every future qualification. If any step disagrees with the expected
 state, stop and requalify the adapter on a disposable Site Map.
@@ -94,6 +113,10 @@ manifest version with the Assistant release record.
 The bridge simulations cover selection restoration, warning and duplicate rejection, exact live
 catalog projection, multi-object native selection, and exactly one Connect, batch Archive, or edge
 settings Undo step even when Orbit advances its internal draft index by more than one. The
+Connect validation simulation also proves that available structured Orbit error and warning
+messages survive the page bridge for display in candidate cards and queue results. The candidate
+model simulation proves that the 2m default includes a candidate at exactly 2.00m and excludes one
+at 2.01m. The
 extension-context simulation also proves that reloading an
 unpacked extension fails closed for invalid runtime/storage getters, callback errors, and rejected
 Promises. Reinjection replaces the page-adapter listener, carries a unique session ID, and rejects
@@ -176,6 +199,27 @@ The static Action-selection checks and naming simulations cover:
 The panel-layout simulation proves that the default right rail, optional left rail, and Float mode
 normalize deterministically. Closing or deactivating the panel removes its document-level rail
 attribute so Orbit regains the full viewport rather than retaining an empty reserved column.
+
+The Detailed-overlay simulations additionally prove:
+
+- the settings schema has separate Overall, Waypoint, Edge, and Area groups while Action labels
+  remain independently owned by Action Names;
+- legacy flat preferences migrate into a bounded versioned schema and normalize idempotently;
+- Waypoint visual/thermal capture booleans and intervals survive the reduced graph snapshot;
+- Edge speed, body height, gait, obstacle cushion, hazard detection, ground friction, stored
+  connection arrows, direction of travel, path mode, route settings, and zero-valued cost remain
+  independently selectable;
+- selected Edge fields that are absent from the snapshot render as `not set` instead of dropping
+  the entire Edge label;
+- meaningful `false` and `0` values are rendered instead of being dropped as defaults;
+- Area callback controls expose only current parameter values, collapse equivalent top-level and
+  recorded-data representations, hide form specs/defaults/options/UI metadata, remain bounded to
+  200 entries, and report missing or mixed variants without choosing an arbitrary value;
+- Area-associated Edge values read the same source settings as the per-Edge overlay, use the same
+  independent field formatters, and compare raw values before display rounding;
+- Waypoint and Edge labels use deterministic wide-scale density sampling, while Area labels begin
+  at `0.8×` zoom and stay density-sampled until `1.5×`;
+- the Areas workspace no longer owns a second session-only map-label toggle.
 
 ## 2026-07-27 Action-name adapter discovery
 
