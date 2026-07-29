@@ -2,6 +2,8 @@
   "use strict";
 
   globalThis.OrbitSiteMapEditorActionNamesWorkspace = Object.freeze({
+    id: "action-names",
+    label: "Action Names",
     selectors: Object.freeze([
       "action-name-builder",
       "action-name-enterprise",

@@ -2,6 +2,8 @@
   "use strict";
 
   globalThis.OrbitSiteMapEditorSelectWorkspace = Object.freeze({
+    id: "select",
+    label: "Select",
     selectors: Object.freeze([
       "selection-count",
       "selection-mode",

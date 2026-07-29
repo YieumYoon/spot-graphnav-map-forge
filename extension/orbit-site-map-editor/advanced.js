@@ -6,6 +6,7 @@
   const validate = globalThis.OrbitSiteMapEditorValidation;
   const workflow = globalThis.OrbitSiteMapEditorWorkflow;
   const extensionContext = globalThis.OrbitSiteMapEditorExtensionContext;
+  const workspaceController = globalThis.OrbitSiteMapEditorWorkspaceController;
   const workspacePanes = [
     globalThis.OrbitSiteMapEditorSelectWorkspace,
     globalThis.OrbitSiteMapEditorActionNamesWorkspace,
@@ -18,7 +19,10 @@
     !validate ||
     !workflow ||
     !extensionContext ||
-    workspacePanes.some((pane) => !pane?.render || !Array.isArray(pane.selectors))
+    !workspaceController ||
+    workspacePanes.some((pane) =>
+      !pane?.id || !pane?.label || !pane?.render || !Array.isArray(pane.selectors)
+    )
   ) return;
   if (
     !runtime.instanceId ||
@@ -64,10 +68,12 @@
   root.dataset.osmeAdvancedInstance = runtime.instanceId;
   const lifecycleController = new AbortController();
   const lifecycleSignal = lifecycleController.signal;
+  let workspaceRegistry = null;
   let removeInvalidationListener = () => {};
   function disposeAdvanced(event) {
     if (event?.detail?.instanceId === runtime.instanceId) return;
     lifecycleController.abort();
+    workspaceRegistry?.dispose();
     removeInvalidationListener();
   }
   window.addEventListener(runtime.disposeEvent, disposeAdvanced, {
@@ -78,19 +84,6 @@
   const nav = document.createElement("nav");
   nav.className = "osme-tabs";
   nav.setAttribute("aria-label", "Editor workflows");
-  for (const [id, label] of [
-    ["explore", "Explore"],
-    ["select", "Select"],
-    ["action-names", "Action Names"],
-    ["edit", "Edit"],
-    ["validate", "Validate"],
-  ]) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.dataset.tab = id;
-    button.textContent = label;
-    nav.append(button);
-  }
   runtime.elements.summary.after(nav);
 
   originalSections[0]?.setAttribute("data-workspace-tab", "explore");
@@ -102,6 +95,14 @@
   workspace.className = "osme-workspace";
   workspace.innerHTML = workspacePanes.map((pane) => pane.render()).join("");
   root.querySelector(".osme-footer").before(workspace);
+  workspaceRegistry = workspaceController.createRegistry({root, nav, host: workspace});
+  workspaceRegistry.register({
+    id: "explore",
+    label: "Explore",
+    pane: originalSections[0],
+  });
+  for (const pane of workspacePanes) workspaceRegistry.register(pane);
+  globalThis.OrbitSiteMapEditorWorkspaces = workspaceRegistry;
 
   const el = {};
   for (const className of workspacePanes.flatMap((pane) => pane.selectors)) {
@@ -253,12 +254,7 @@
     state.tab = tab;
     if (changed) state.overlayRevision += 1;
     if (userInitiated) tabSelectionRevision += 1;
-    for (const button of nav.querySelectorAll("[data-tab]")) {
-      button.dataset.active = String(button.dataset.tab === tab);
-    }
-    for (const pane of root.querySelectorAll("[data-workspace-tab]")) {
-      pane.hidden = pane.dataset.workspaceTab !== tab;
-    }
+    workspaceRegistry.activate(tab, {render: false, userInitiated});
     if (changed) persist();
   }
 

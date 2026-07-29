@@ -8,9 +8,9 @@
   if (runtime.isDisposed?.() || !extensionContext.isActive()) return;
 
   const root = runtime.elements.panel;
-  const nav = root?.querySelector(".osme-tabs");
   const workspace = root?.querySelector(".osme-workspace");
-  if (!root || !nav || !workspace) return;
+  const workspaceRegistry = globalThis.OrbitSiteMapEditorWorkspaces;
+  if (!root || !workspace || !workspaceRegistry) return;
   if (root.dataset.osmeAreasInstance === runtime.instanceId) return;
   root.dataset.osmeAreasInstance = runtime.instanceId;
 
@@ -22,12 +22,6 @@
   const lifecycleController = new AbortController();
   const lifecycleSignal = lifecycleController.signal;
   let removeInvalidationListener = () => {};
-
-  const tabButton = document.createElement("button");
-  tabButton.type = "button";
-  tabButton.dataset.tab = "areas";
-  tabButton.textContent = "Areas";
-  nav.append(tabButton);
 
   const pane = document.createElement("section");
   pane.className = "osme-section osme-advanced-pane osme-areas-pane";
@@ -416,12 +410,6 @@
     signal: lifecycleSignal,
   });
   el.confirm.addEventListener("click", confirm, { signal: lifecycleSignal });
-  nav.addEventListener("click", (event) => {
-    const tab = event.target.closest("[data-tab]")?.dataset.tab;
-    if (!tab) return;
-    touchOverlay();
-    if (tab === "areas") renderList();
-  }, { signal: lifecycleSignal });
   window.addEventListener(runtime.instanceEvents.snapshot, () => {
     const liveIds = new Set(records().map((area) => area.id));
     state.selectedIds = new Set(
@@ -448,6 +436,16 @@
     signal: lifecycleSignal,
   });
   removeInvalidationListener = extensionContext.onInvalidated(disposeAreas);
+
+  workspaceRegistry.register({
+    id: "areas",
+    label: "Areas",
+    pane,
+    render: () => {
+      touchOverlay();
+      renderList();
+    },
+  });
 
   globalThis.OrbitSiteMapEditorAreas = Object.freeze({
     overlayState: () => ({

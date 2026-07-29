@@ -2,6 +2,8 @@
   "use strict";
 
   globalThis.OrbitSiteMapEditorEditWorkspace = Object.freeze({
+    id: "edit",
+    label: "Edit",
     selectors: Object.freeze([
       "preview-archive",
       "copy-settings",

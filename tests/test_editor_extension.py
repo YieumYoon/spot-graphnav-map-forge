@@ -37,6 +37,7 @@ def test_editor_extension_manifest_is_independent_and_minimal() -> None:
         assert script_order[dependency] < script_order["content.js"]
     assert script_order["panel-layout.js"] < script_order["content.js"]
     for consumer in (
+        "workspace-controller.js",
         "workspace-select.js",
         "workspace-action-names.js",
         "workspace-edit.js",
@@ -46,6 +47,7 @@ def test_editor_extension_manifest_is_independent_and_minimal() -> None:
         "walk-ui.js",
     ):
         assert script_order["content.js"] < script_order[consumer]
+    assert script_order["workspace-controller.js"] < script_order["advanced.js"]
     assert script_order["advanced.js"] < script_order["areas-ui.js"]
 
     web_resources = [
@@ -86,6 +88,8 @@ def test_workspace_templates_own_complete_non_overlapping_selectors() -> None:
           }),
           selectorCount: selectors.length,
           uniqueSelectorCount: new Set(selectors).size,
+          ids: panes.map((pane) => pane.id),
+          labels: panes.map((pane) => pane.label),
         }));
         """
     )
@@ -101,6 +105,8 @@ def test_workspace_templates_own_complete_non_overlapping_selectors() -> None:
 
     assert result["complete"] is True
     assert result["selectorCount"] == result["uniqueSelectorCount"]
+    assert result["ids"] == ["select", "action-names", "edit", "validate"]
+    assert result["labels"] == ["Select", "Action Names", "Edit", "Validate"]
 
     action_markup = subprocess.run(
         [
@@ -945,7 +951,8 @@ def test_area_settings_aggregate_labels_and_build_partial_or_full_batches() -> N
 
     areas_ui = (EXTENSION / "areas-ui.js").read_text(encoding="utf-8")
     content = (EXTENSION / "content.js").read_text(encoding="utf-8")
-    assert 'tabButton.dataset.tab = "areas"' in areas_ui
+    assert "workspaceRegistry.register({" in areas_ui
+    assert 'id: "areas"' in areas_ui
     assert 'value="selected">Checked Areas only' in areas_ui
     assert 'value="all">All editable Areas' in areas_ui
     assert 'value="merge">Merge listed fields (partial update)' in areas_ui
@@ -3947,6 +3954,14 @@ def test_walk_ui_is_read_only_and_exposes_coverage_controls() -> None:
         global.OrbitSiteMapEditorExtensionContext = {
           isActive: () => true,
           onInvalidated: () => () => {},
+        };
+        global.OrbitSiteMapEditorWorkspaces = {
+          register(controller) {
+            const button = new FakeNode();
+            button.dataset.tab = controller.id;
+            nav.append(button);
+            return controller;
+          },
         };
         global.OrbitSiteMapEditorRuntime = {
           currentMapId: () => "map-1",

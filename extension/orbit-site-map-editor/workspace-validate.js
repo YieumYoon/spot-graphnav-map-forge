@@ -2,6 +2,8 @@
   "use strict";
 
   globalThis.OrbitSiteMapEditorValidateWorkspace = Object.freeze({
+    id: "validate",
+    label: "Validate",
     selectors: Object.freeze([
       "run-validation",
       "validation-summary",

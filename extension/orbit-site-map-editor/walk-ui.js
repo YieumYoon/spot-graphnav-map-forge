@@ -8,9 +8,9 @@
   if (runtime.isDisposed?.() || !extensionContext.isActive()) return;
 
   const root = runtime.elements.panel;
-  const nav = root?.querySelector(".osme-tabs");
   const workspace = root?.querySelector(".osme-workspace");
-  if (!root || !nav || !workspace) return;
+  const workspaceRegistry = globalThis.OrbitSiteMapEditorWorkspaces;
+  if (!root || !workspace || !workspaceRegistry) return;
   if (root.dataset.osmeWalkInstance === runtime.instanceId) return;
   root.dataset.osmeWalkInstance = runtime.instanceId;
 
@@ -35,12 +35,6 @@
   const lifecycleController = new AbortController();
   const lifecycleSignal = lifecycleController.signal;
   let removeInvalidationListener = () => {};
-
-  const tabButton = document.createElement("button");
-  tabButton.type = "button";
-  tabButton.dataset.tab = "walk";
-  tabButton.textContent = "Walk";
-  nav.append(tabButton);
 
   const pane = document.createElement("section");
   pane.className = "osme-section osme-advanced-pane osme-walk-pane";
@@ -788,13 +782,6 @@
     state.overlay[checkbox.dataset.walkOverlay] = checkbox.checked;
     touchOverlay();
   }, { signal: lifecycleSignal });
-  nav.addEventListener("click", (event) => {
-    if (
-      event.target.closest("[data-tab]")?.dataset.tab === "walk" &&
-      !state.siteViewSnapshot &&
-      !state.loading
-    ) refreshSiteViewSnapshot();
-  }, { signal: lifecycleSignal });
   window.addEventListener(runtime.instanceEvents.snapshot, (event) => {
     const snapshot = graphSnapshot();
     const liveMapId = String(event.detail?.mapId || snapshot.map?.id || "");
@@ -851,6 +838,16 @@
     signal: lifecycleSignal,
   });
   removeInvalidationListener = extensionContext.onInvalidated(disposeWalk);
+
+  workspaceRegistry.register({
+    id: "walk",
+    label: "Walk",
+    pane,
+    render: () => {
+      render();
+      if (!state.siteViewSnapshot && !state.loading) refreshSiteViewSnapshot();
+    },
+  });
 
   globalThis.OrbitSiteMapEditorWalk = Object.freeze({ overlayState });
   render();
