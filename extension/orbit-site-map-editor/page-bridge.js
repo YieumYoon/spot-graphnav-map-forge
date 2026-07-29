@@ -1215,6 +1215,71 @@
     };
   }
 
+  function mutationHistoryResult(before, after) {
+    return {
+      editIndex: after.editIndex,
+      undoDepth: after.undoDepth,
+      draftIndexDelta:
+        Number.isInteger(before.editIndex) && Number.isInteger(after.editIndex)
+          ? after.editIndex - before.editIndex
+          : null,
+    };
+  }
+
+  function executeNativeMutation({
+    store,
+    beforeHistory,
+    targetKeys,
+    dispatch,
+    historyFromState = (state) => historyState(state?.mapEditor?.form),
+    safeHistory = safeHistoryState,
+    readback,
+    failureError,
+    readbackError = failureError,
+  }) {
+    let finalState;
+    let afterHistory;
+    try {
+      dispatch();
+      finalState = store.getState();
+      afterHistory = historyFromState(finalState);
+    } catch {
+      return mutationFailure(
+        "native_mutation_exception",
+        beforeHistory,
+        safeHistory(store),
+        {dispatchAttempted: true, targetKeys},
+      );
+    }
+
+    let evidence;
+    try {
+      evidence = readback(finalState) || {};
+    } catch {
+      return mutationFailure(readbackError, beforeHistory, afterHistory, {
+        writeObserved: false,
+        targetKeys,
+      });
+    }
+    if (!evidence.verified || !oneUndoDraftCreated(beforeHistory, afterHistory)) {
+      return mutationFailure(
+        evidence.error || failureError,
+        beforeHistory,
+        afterHistory,
+        {
+          writeObserved: Boolean(evidence.writeObserved),
+          targetKeys,
+        },
+      );
+    }
+    return {
+      finalState,
+      afterHistory,
+      evidence,
+      history: mutationHistoryResult(beforeHistory, afterHistory),
+    };
+  }
+
   const VALIDATION_MESSAGE_KEYS = [
     "defaultMessage",
     "message",
@@ -1454,58 +1519,37 @@
     const beforeHistory = historyState(store.getState()?.mapEditor?.form);
     const targetKeys = [edgeKey(waypointIds[0], waypointIds[1])];
     if (!isCurrentBridge()) return { error: "bridge_disposed" };
-    let finalState;
-    let added;
-    let afterHistory;
-    try {
-      store.dispatch({
+    const execution = executeNativeMutation({
+      store,
+      beforeHistory,
+      targetKeys,
+      dispatch: () => store.dispatch({
         type: ADD_SITE_EDGE_ACTION_TYPE,
         payload: validation.candidate,
-      });
-      finalState = store.getState();
-      added = editedEdgeOverride(finalState, waypointIds);
-      afterHistory = historyState(finalState?.mapEditor?.form);
-    } catch {
-      return mutationFailure(
-        "native_mutation_exception",
-        beforeHistory,
-        safeHistoryState(store),
-        {
-          dispatchAttempted: true,
-          targetKeys,
-        },
-      );
-    }
-    if (
-      !added ||
-      added.archived ||
-      added.disabled ||
-      added.siteMapId !== mapId ||
-      !sameWaypointPair(added.edge?.id, waypointIds) ||
-      finalState?.mapDisplay?.siteMapId !== mapId ||
-      currentMapId() !== mapId ||
-      !oneUndoDraftCreated(beforeHistory, afterHistory)
-    ) {
-      return mutationFailure(
-        "edge_draft_not_created",
-        beforeHistory,
-        afterHistory,
-        {
+      }),
+      readback: (finalState) => {
+        const added = editedEdgeOverride(finalState, waypointIds);
+        return {
+          added,
           writeObserved: Boolean(added),
-          targetKeys,
-        },
-      );
-    }
+          verified: Boolean(
+            added &&
+            !added.archived &&
+            !added.disabled &&
+            added.siteMapId === mapId &&
+            sameWaypointPair(added.edge?.id, waypointIds) &&
+            finalState?.mapDisplay?.siteMapId === mapId &&
+            currentMapId() === mapId
+          ),
+        };
+      },
+      failureError: "edge_draft_not_created",
+    });
+    if (execution.error) return execution;
     return {
       added: true,
       edgeKey: edgeKey(waypointIds[0], waypointIds[1]),
-      editIndex: afterHistory.editIndex,
-      undoDepth: afterHistory.undoDepth,
-      draftIndexDelta:
-        Number.isInteger(beforeHistory.editIndex) &&
-        Number.isInteger(afterHistory.editIndex)
-          ? afterHistory.editIndex - beforeHistory.editIndex
-          : null,
+      ...execution.history,
     };
   }
 
@@ -1617,69 +1661,47 @@
     }
 
     const beforeHistory = historyState(store.getState()?.mapEditor?.form);
-    let finalState;
-    let afterHistory;
-    try {
-      store.dispatch({ type: ARCHIVE_SITE_EDGES_ACTION_TYPE, payload: activeEdges });
-      finalState = store.getState();
-      afterHistory = historyState(finalState?.mapEditor?.form);
-    } catch {
-      try {
-        store.dispatch({ type: SELECT_EDGES_ACTION_TYPE, payload: [] });
-      } catch {
-        // The mutation result is already ambiguous; selection cleanup is best effort.
-      }
-      return mutationFailure(
-        "native_mutation_exception",
-        beforeHistory,
-        safeHistoryState(store),
-        {
-          dispatchAttempted: true,
-          targetKeys: keys,
-        },
-      );
-    }
+    const execution = executeNativeMutation({
+      store,
+      beforeHistory,
+      targetKeys: keys,
+      dispatch: () => store.dispatch({
+        type: ARCHIVE_SITE_EDGES_ACTION_TYPE,
+        payload: activeEdges,
+      }),
+      readback: (finalState) => {
+        const archivedKeys = keys.filter((key, index) => {
+          const archived = finalState?.mapEditor?.form?.data?.edges?.nonEntities?.[key];
+          return (
+            archived?.archived &&
+            !archived.disabled &&
+            archived.siteMapId === mapId &&
+            sameWaypointPair(archived.edge?.id, waypointPairs[index])
+          );
+        });
+        return {
+          archivedKeys,
+          writeObserved: archivedKeys.length > 0,
+          verified: Boolean(
+            finalState?.mapDisplay?.siteMapId === mapId &&
+            currentMapId() === mapId &&
+            archivedKeys.length === keys.length
+          ),
+        };
+      },
+      failureError: "edge_archive_batch_not_created",
+    });
     try {
       store.dispatch({ type: SELECT_EDGES_ACTION_TYPE, payload: [] });
     } catch {
       // Selection cleanup cannot change the native graph draft.
     }
-    const archivedKeys = keys.filter((key, index) => {
-      const archived = finalState?.mapEditor?.form?.data?.edges?.nonEntities?.[key];
-      return (
-        archived?.archived &&
-        !archived.disabled &&
-        archived.siteMapId === mapId &&
-        sameWaypointPair(archived.edge?.id, waypointPairs[index])
-      );
-    });
-    if (
-      finalState?.mapDisplay?.siteMapId !== mapId ||
-      currentMapId() !== mapId ||
-      archivedKeys.length !== keys.length ||
-      !oneUndoDraftCreated(beforeHistory, afterHistory)
-    ) {
-      return mutationFailure(
-        "edge_archive_batch_not_created",
-        beforeHistory,
-        afterHistory,
-        {
-          writeObserved: archivedKeys.length > 0,
-          targetKeys: keys,
-        },
-      );
-    }
+    if (execution.error) return execution;
     return {
       archived: true,
       archivedCount: keys.length,
       edgeKeys: keys,
-      editIndex: afterHistory.editIndex,
-      undoDepth: afterHistory.undoDepth,
-      draftIndexDelta:
-        Number.isInteger(beforeHistory.editIndex) &&
-        Number.isInteger(afterHistory.editIndex)
-          ? afterHistory.editIndex - beforeHistory.editIndex
-          : null,
+      ...execution.history,
     };
   }
 
@@ -1741,34 +1763,19 @@
     }
 
     const beforeHistory = historyState(initialState?.mapEditor?.form);
-    let finalState;
-    let afterHistory;
-    let observedEditedKeys = [];
-    try {
-      store.dispatch({
+    const execution = executeNativeMutation({
+      store,
+      beforeHistory,
+      targetKeys: keys,
+      dispatch: () => store.dispatch({
         type: UPDATE_SITE_EDGES_ACTION_TYPE,
         payload: { updatedEdges, originalEdgesById },
-      });
-      finalState = store.getState();
-      afterHistory = historyState(finalState?.mapEditor?.form);
-      observedEditedKeys = keys.filter((key, index) =>
-        Boolean(editedEdgeOverride(finalState, updates[index].waypointIds))
-      );
-    } catch {
-      return mutationFailure(
-        "native_mutation_exception",
-        beforeHistory,
-        safeHistoryState(store),
-        {
-          dispatchAttempted: true,
-          targetKeys: keys,
-        },
-      );
-    }
-    let verifiedUpdatedKeys;
-    let annotationLossKeys;
-    try {
-      annotationLossKeys = keys.filter((key, index) => {
+      }),
+      readback: (finalState) => {
+        const observedEditedKeys = keys.filter((key, index) =>
+          Boolean(editedEdgeOverride(finalState, updates[index].waypointIds))
+        );
+        const annotationLossKeys = keys.filter((key, index) => {
         const edited = editedEdgeOverride(finalState, updates[index].waypointIds);
         const original = originalEdgesById[key];
         return Boolean(
@@ -1779,8 +1786,8 @@
             unmodeledAnnotations(original.edge?.annotations),
           )
         );
-      });
-      verifiedUpdatedKeys = keys.filter((key, index) => {
+        });
+        const verifiedUpdatedKeys = keys.filter((key, index) => {
         const edited = editedEdgeOverride(finalState, updates[index].waypointIds);
         const original = originalEdgesById[key];
         return Boolean(
@@ -1801,56 +1808,29 @@
             unmodeledAnnotations(original.edge?.annotations),
           )
         );
-      });
-    } catch {
-      return mutationFailure(
-        "edge_annotation_readback_failed",
-        beforeHistory,
-        afterHistory,
-        {
+        });
+        return {
+          error: annotationLossKeys.length
+            ? "edge_annotation_readback_failed"
+            : "edge_settings_batch_not_created",
           writeObserved: observedEditedKeys.length > 0,
-          targetKeys: keys,
-        },
-      );
-    }
-    if (annotationLossKeys.length) {
-      return mutationFailure(
-        "edge_annotation_readback_failed",
-        beforeHistory,
-        afterHistory,
-        {
-          writeObserved: observedEditedKeys.length > 0,
-          targetKeys: keys,
-        },
-      );
-    }
-    if (
-      finalState?.mapDisplay?.siteMapId !== mapId ||
-      currentMapId() !== mapId ||
-      verifiedUpdatedKeys.length !== keys.length ||
-      !oneUndoDraftCreated(beforeHistory, afterHistory)
-    ) {
-      return mutationFailure(
-        "edge_settings_batch_not_created",
-        beforeHistory,
-        afterHistory,
-        {
-          writeObserved: observedEditedKeys.length > 0,
-          targetKeys: keys,
-        },
-      );
-    }
+          verified: Boolean(
+            !annotationLossKeys.length &&
+            finalState?.mapDisplay?.siteMapId === mapId &&
+            currentMapId() === mapId &&
+            verifiedUpdatedKeys.length === keys.length
+          ),
+        };
+      },
+      failureError: "edge_settings_batch_not_created",
+      readbackError: "edge_annotation_readback_failed",
+    });
+    if (execution.error) return execution;
     return {
       updated: true,
       updatedCount: keys.length,
       edgeKeys: keys,
-      editIndex: afterHistory.editIndex,
-      undoDepth: afterHistory.undoDepth,
-      draftIndexDelta:
-        Number.isInteger(beforeHistory.editIndex) &&
-        Number.isInteger(afterHistory.editIndex)
-          ? afterHistory.editIndex - beforeHistory.editIndex
-          : null,
+      ...execution.history,
     };
   }
 
@@ -1934,72 +1914,46 @@
     const actionForm = initialState?.mapMissionsEditor?.form;
     if (!actionForm) return { error: "orbit_action_form_unavailable" };
     const beforeHistory = historyState(actionForm);
-    let finalState;
-    let afterHistory;
-    let writtenIds = [];
-    try {
-      store.dispatch({
+    const execution = executeNativeMutation({
+      store,
+      beforeHistory,
+      targetKeys: targetIds,
+      dispatch: () => store.dispatch({
         type: UPDATE_ACTION_NAMES_ACTION_TYPE,
         payload: { updatedActions, originalActionsById },
-      });
-      finalState = store.getState();
-      afterHistory = historyState(finalState?.mapMissionsEditor?.form);
-      const drafts = finalState?.mapMissionsEditor?.form?.data?.actions?.entities || {};
-      writtenIds = targetIds.filter((id) => Boolean(drafts[id]));
-    } catch {
-      return mutationFailure(
-        "native_mutation_exception",
-        beforeHistory,
-        safeActionHistoryState(store),
-        { dispatchAttempted: true, targetKeys: targetIds },
-      );
-    }
-
-    let verifiedIds = [];
-    try {
-      const drafts = finalState?.mapMissionsEditor?.form?.data?.actions?.entities || {};
-      verifiedIds = targetIds.filter((id, index) => {
-        const edited = drafts[id];
-        return Boolean(
-          edited &&
-          edited.name === updates[index].desiredName &&
-          entityWaypointIds(edited).includes(updates[index].waypointId) &&
-          sameActionExceptName(edited, updatedActions[index])
-        );
-      });
-    } catch {
-      return mutationFailure(
-        "action_name_readback_failed",
-        beforeHistory,
-        afterHistory,
-        { writeObserved: writtenIds.length > 0, targetKeys: targetIds },
-      );
-    }
-
-    if (
-      finalState?.mapDisplay?.siteMapId !== mapId ||
-      currentMapId() !== mapId ||
-      verifiedIds.length !== targetIds.length ||
-      !oneUndoDraftCreated(beforeHistory, afterHistory)
-    ) {
-      return mutationFailure(
-        "action_name_batch_not_created",
-        beforeHistory,
-        afterHistory,
-        { writeObserved: writtenIds.length > 0, targetKeys: targetIds },
-      );
-    }
+      }),
+      historyFromState: (state) => historyState(state?.mapMissionsEditor?.form),
+      safeHistory: safeActionHistoryState,
+      readback: (finalState) => {
+        const drafts = finalState?.mapMissionsEditor?.form?.data?.actions?.entities || {};
+        const writtenIds = targetIds.filter((id) => Boolean(drafts[id]));
+        const verifiedIds = targetIds.filter((id, index) => {
+          const edited = drafts[id];
+          return Boolean(
+            edited &&
+            edited.name === updates[index].desiredName &&
+            entityWaypointIds(edited).includes(updates[index].waypointId) &&
+            sameActionExceptName(edited, updatedActions[index])
+          );
+        });
+        return {
+          writeObserved: writtenIds.length > 0,
+          verified: Boolean(
+            finalState?.mapDisplay?.siteMapId === mapId &&
+            currentMapId() === mapId &&
+            verifiedIds.length === targetIds.length
+          ),
+        };
+      },
+      failureError: "action_name_batch_not_created",
+      readbackError: "action_name_readback_failed",
+    });
+    if (execution.error) return execution;
     return {
       renamed: true,
       updatedCount: targetIds.length,
       actionIds: targetIds,
-      editIndex: afterHistory.editIndex,
-      undoDepth: afterHistory.undoDepth,
-      draftIndexDelta:
-        Number.isInteger(beforeHistory.editIndex) &&
-        Number.isInteger(afterHistory.editIndex)
-          ? afterHistory.editIndex - beforeHistory.editIndex
-          : null,
+      ...execution.history,
     };
   }
 

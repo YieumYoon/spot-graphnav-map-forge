@@ -229,6 +229,22 @@ def test_edge_settings_contract_matches_isolated_bridges_and_independent_assista
     assert "EDGE_SETTING_FIELDS: edgeSettingsContract.FIELDS" in overlay_settings
 
 
+def test_bridge_mutations_share_history_pipeline_but_keep_exact_readbacks() -> None:
+    bridge = (EXTENSION / "page-bridge.js").read_text(encoding="utf-8")
+
+    assert "function executeNativeMutation({" in bridge
+    assert bridge.count("const execution = executeNativeMutation({") == 4
+    for exact_readback in (
+        "edge_draft_not_created",
+        "edge_archive_batch_not_created",
+        "edge_settings_batch_not_created",
+        "edge_annotation_readback_failed",
+        "action_name_batch_not_created",
+        "action_name_readback_failed",
+    ):
+        assert exact_readback in bridge
+
+
 def test_overlay_preferences_and_each_label_value_are_independent() -> None:
     node = shutil.which("node")
     if not node:
