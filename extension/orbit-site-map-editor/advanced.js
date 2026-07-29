@@ -61,6 +61,7 @@
   let workspaceLoadGeneration = 0;
   let workspaceLoadingMapId = "";
   let tabSelectionRevision = 0;
+  let findingsSnapshotRevision = -1;
   const actionNameRowsById = new Map();
 
   const root = runtime.elements.panel;
@@ -101,7 +102,9 @@
     label: "Explore",
     pane: originalSections[0],
   });
-  for (const pane of workspacePanes) workspaceRegistry.register(pane);
+  for (const pane of workspacePanes) {
+    workspaceRegistry.register({id: pane.id, label: pane.label});
+  }
   globalThis.OrbitSiteMapEditorWorkspaces = workspaceRegistry;
 
   const el = {};
@@ -254,7 +257,8 @@
     state.tab = tab;
     if (changed) state.overlayRevision += 1;
     if (userInitiated) tabSelectionRevision += 1;
-    workspaceRegistry.activate(tab, {render: false, userInitiated});
+    workspaceRegistry.activate(tab, {userInitiated});
+    renderWorkspace(tab);
     if (changed) persist();
   }
 
@@ -918,22 +922,46 @@
     el.uncertainty_recovery.append(warning);
   }
 
-  function renderAdvanced() {
+  function refreshFindings() {
+    const revision = Number(runtime.state.snapshotRevision || 0);
+    if (revision === findingsSnapshotRevision) return;
+    state.findings = validate.validateGraph(snapshot());
+    findingsSnapshotRevision = revision;
+  }
+
+  function renderWorkspace(tab) {
+    if (tab === "select") {
+      renderSelection();
+      renderQuery();
+    } else if (tab === "action-names") {
+      updateActionNamePlan();
+      renderActionNamePicker();
+      renderActionNamePlan();
+    } else if (tab === "edit") {
+      renderPresets();
+      renderMutation();
+      renderQueue();
+      renderUncertaintyRecovery();
+    } else if (tab === "validate") {
+      refreshFindings();
+      renderFindings();
+      renderPath();
+      renderReachability();
+      renderCrosswalks();
+    }
+  }
+
+  function renderAdvanced({all = false} = {}) {
     state.overlayRevision += 1;
-    updateActionNamePlan();
-    renderSelection();
-    renderQuery();
-    renderActionNamePicker();
-    renderActionNamePlan();
-    renderPresets();
-    renderMutation();
-    renderQueue();
-    renderFindings();
-    renderPath();
-    renderReachability();
-    renderCrosswalks();
-    renderUncertaintyRecovery();
-    setTab(state.tab);
+    refreshFindings();
+    if (all) {
+      for (const tab of ["select", "action-names", "edit", "validate"]) {
+        renderWorkspace(tab);
+      }
+    } else {
+      renderWorkspace(state.tab);
+    }
+    workspaceRegistry.activate(state.tab, {render: false});
   }
 
   nav.addEventListener("click", (event) => {
@@ -1308,7 +1336,6 @@
       loadWorkspace(liveMapId);
       return;
     }
-    state.findings = validate.validateGraph(snapshot());
     renderAdvanced();
   }, { signal: lifecycleSignal });
 
@@ -1423,7 +1450,8 @@
       ...(Array.isArray(stored.presets) ? stored.presets : []),
     ];
     state.connectQueue = Array.isArray(stored.connectQueue) ? stored.connectQueue : [];
-    state.findings = validate.validateGraph(snapshot());
+    findingsSnapshotRevision = -1;
+    refreshFindings();
     const current = snapshot().selectedWaypointIds || [];
     if (current.length >= 2) {
       el.path_start.value = current[0];
@@ -1432,7 +1460,7 @@
       el.select_path_end.value = current[1];
     }
     workspaceLoadingMapId = "";
-    renderAdvanced();
+    renderAdvanced({all: true});
     if (preserveSelectedTab) persist();
   }
 

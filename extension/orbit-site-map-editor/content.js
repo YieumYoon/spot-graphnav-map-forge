@@ -11,7 +11,7 @@
   const DISPOSE_EVENT = "orbit-site-map-editor-dispose-v1";
   const SVG_NS = "http://www.w3.org/2000/svg";
   const CAMERA_WIDTH_METERS = 10;
-  const SNAPSHOT_INTERVAL_MS = 1800;
+  const SNAPSHOT_POLL_INTERVAL_MS = 1800;
   const MAX_NATIVE_VALIDATIONS = 12;
   const MAX_OVERLAY_WAYPOINTS = 350;
   const MAX_OVERLAY_EDGES = 750;
@@ -79,6 +79,8 @@
 
   const state = {
     snapshot: null,
+    snapshotFingerprint: "",
+    snapshotRevision: 0,
     snapshotInFlight: false,
     hasSuccessfulSnapshot: false,
     bridgeReady: false,
@@ -1265,7 +1267,22 @@
     state.lastOverlayKey = "";
   }
 
-  async function refreshSnapshot({ quiet = false, allowBusy = false } = {}) {
+  function snapshotFingerprint(snapshot) {
+    return JSON.stringify([
+      snapshot?.map?.id || "",
+      snapshot?.editIndex ?? null,
+      snapshot?.undoDepth ?? null,
+      (snapshot?.waypoints || []).length,
+      (snapshot?.edges || []).length,
+      (snapshot?.areas || []).length,
+      (snapshot?.actions || []).length,
+      snapshot?.selectedWaypointIds || [],
+      snapshot?.selectedEdgeIds || [],
+      snapshot?.currentActionId || "",
+    ]);
+  }
+
+  async function refreshSnapshot({ quiet = false, allowBusy = false, force = false } = {}) {
     if (state.disposed) return null;
     if (
       state.snapshotInFlight ||
@@ -1282,9 +1299,14 @@
         !allowBusy &&
         (state.validatingBatch || state.validatingId || state.connectingId)
       ) return;
+      const nextFingerprint = snapshotFingerprint(response.snapshot);
+      const snapshotChanged = nextFingerprint !== state.snapshotFingerprint;
       state.snapshot = response.snapshot;
+      state.snapshotFingerprint = nextFingerprint;
+      if (snapshotChanged) state.snapshotRevision += 1;
       const firstSuccessfulSnapshot = !state.hasSuccessfulSnapshot;
       state.hasSuccessfulSnapshot = true;
+      if (!snapshotChanged && !force) return state.snapshot;
       ensureValidationContext();
       const showingLiveRefreshStatus =
         state.statusKind === "ok" &&
@@ -1298,8 +1320,14 @@
       }
       render();
       window.dispatchEvent(new CustomEvent(instanceEvents.snapshot, {
-        detail: { mapId: state.snapshot.map.id, editIndex: state.snapshot.editIndex },
+        detail: {
+          mapId: state.snapshot.map.id,
+          editIndex: state.snapshot.editIndex,
+          revision: state.snapshotRevision,
+          changed: snapshotChanged,
+        },
       }));
+      return state.snapshot;
     } catch (error) {
       if (!quiet) setStatus(friendlyError(error.message), "error");
     } finally {
@@ -2197,7 +2225,7 @@
     persist();
     render();
   });
-  elements.refresh.addEventListener("click", () => refreshSnapshot());
+  elements.refresh.addEventListener("click", () => refreshSnapshot({force: true}));
   elements.search.addEventListener("input", (event) => {
     state.query = event.target.value;
     renderSearch();
@@ -2443,7 +2471,7 @@
         return;
       }
       refreshSnapshot({ quiet: true });
-    }, SNAPSHOT_INTERVAL_MS);
+    }, SNAPSHOT_POLL_INTERVAL_MS);
     overlayAnimationId = window.requestAnimationFrame(animationLoop);
   }
 

@@ -372,7 +372,7 @@
       ) state.selectedIds.add(area.id);
     }
     touchOverlay();
-    renderList();
+    if (workspaceRegistry.activeId() === "areas") renderList();
   }, { signal: lifecycleSignal });
   el.clear.addEventListener("click", () => {
     state.selectedIds.clear();
@@ -421,7 +421,7 @@
         state.pending.editIndex !== snapshot().editIndex)
     ) setPending(null);
     touchOverlay();
-    renderList();
+    if (workspaceRegistry.activeId() === "areas") renderList();
   }, { signal: lifecycleSignal });
   window.addEventListener(runtime.instanceEvents.mutationUncertain, renderReview, {
     signal: lifecycleSignal,

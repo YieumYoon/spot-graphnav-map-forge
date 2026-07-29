@@ -188,6 +188,19 @@ def test_workspace_templates_own_complete_non_overlapping_selectors() -> None:
     assert "const actionNameLabels = actionNameLabelsVisible" in content
 
 
+def test_unchanged_snapshot_poll_skips_full_render_and_workspace_recalculation() -> None:
+    content = (EXTENSION / "content.js").read_text(encoding="utf-8")
+    advanced = (EXTENSION / "advanced.js").read_text(encoding="utf-8")
+    areas = (EXTENSION / "areas-ui.js").read_text(encoding="utf-8")
+
+    assert "snapshotFingerprint" in content
+    assert "if (!snapshotChanged && !force) return state.snapshot;" in content
+    assert "snapshotRevision" in content
+    assert "findingsSnapshotRevision" in advanced
+    assert "function renderWorkspace(tab)" in advanced
+    assert 'workspaceRegistry.activeId() === "areas"' in areas
+
+
 def test_overlay_preferences_and_each_label_value_are_independent() -> None:
     node = shutil.which("node")
     if not node:
