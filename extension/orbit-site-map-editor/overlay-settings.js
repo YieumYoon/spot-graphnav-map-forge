@@ -15,6 +15,14 @@
   ]);
   const UNSAFE_KEYS = new Set(["__proto__", "constructor", "prototype"]);
   const MISSING_VALUE = Symbol("missing overlay value");
+  const EFFECTIVE_EDGE_DEFAULTS = Object.freeze({
+    speed: Symbol("Orbit default medium speed"),
+    audioVisual: Symbol("Orbit default no audio visual behavior"),
+    stairsMode: Symbol("Orbit managed stair mode"),
+    swingHeight: Symbol("Orbit managed swing height"),
+    corridorDistance: Symbol("Orbit managed corridor distance"),
+    cost: Symbol("Orbit managed edge cost"),
+  });
   const CALLBACK_VALUE_CONTAINERS = Object.freeze([
     Object.freeze(["recordedData", "customParams", "values"]),
     Object.freeze(["recordedData", "parameters", "values", "values"]),
@@ -44,7 +52,7 @@
     { id: "edgeBodyHeight", label: "Edge body height", edgeField: "bodyHeight" },
     { id: "edgeGait", label: "Edge gait", edgeField: "gait" },
     { id: "edgeAudioVisual", label: "Edge audio/visual", edgeField: "audioVisual" },
-    { id: "edgePathFollowing", label: "Edge path mode", edgeField: "pathFollowing" },
+    { id: "edgePathFollowing", label: "Edge strict path following", edgeField: "pathFollowing" },
     { id: "edgeObstaclePadding", label: "Edge obstacle cushion", edgeField: "obstaclePadding" },
     { id: "edgeHazardDetection", label: "Edge hazard detection", edgeField: "hazardDetection" },
     { id: "edgeGroundFriction", label: "Edge ground friction", edgeField: "groundFriction" },
@@ -113,7 +121,7 @@
       label: "Edges",
       masterLabel: "Show Edge lines and labels",
       guidance:
-        "Edge labels are sampled when zoomed out. Selected, work, and finding Edges are always prioritized.",
+        "Edge labels show effective Orbit values. “(default)” means Orbit supplies the value when the map field is absent.",
       sections: [
         {
           label: "Identity & geometry",
@@ -166,7 +174,7 @@
       label: "Areas",
       masterLabel: "Show Area labels",
       guidance:
-        "Area labels start at 0.8× zoom, later than Waypoint and Edge labels, then remain density-sampled.",
+        "Area labels stay density-sampled at wide map scales and progressively reveal more while zooming in.",
       sections: [
         {
           label: "Area identity",
@@ -183,7 +191,7 @@
         {
           label: "Same Edge settings, grouped by Area",
           description:
-            "These are the same values as the Edges section above, aggregated across every Edge attached to this Area. Different values show mixed (N).",
+            "These are the same effective values as the Edges section above, aggregated across every Edge attached to this Area. Different effective values show mixed (N).",
           fields: AREA_EDGE_CONTROL_FIELDS,
         },
       ],
@@ -248,7 +256,7 @@
       0: "Unknown",
       1: "Auto",
       2: "Trot",
-      3: "Speed-select trot",
+      3: "Walk",
       4: "Crawl",
       5: "Amble",
       6: "Speed-select amble",
@@ -270,14 +278,14 @@
     }),
     clutter: Object.freeze({
       0: "Unknown",
-      1: "Off",
-      2: "From footfalls",
+      1: "off",
+      2: "on (recorded footfalls)",
     }),
     hazard: Object.freeze({
       0: "Unknown",
-      1: "Off",
-      2: "On",
-      3: "Cost",
+      1: "Ignore",
+      2: "Avoid",
+      3: "Prefer Avoid",
     }),
     stairs: Object.freeze({
       0: "Unknown",
@@ -470,7 +478,14 @@
 
   function finiteScalar(value) {
     const unwrapped = scalar(value);
+    if (isObject(unwrapped) && Object.keys(unwrapped).length === 0) return 0;
     return Number.isFinite(unwrapped) ? unwrapped : null;
+  }
+
+  function booleanScalar(value) {
+    const unwrapped = scalar(value);
+    if (isObject(unwrapped) && Object.keys(unwrapped).length === 0) return false;
+    return unwrapped;
   }
 
   function compactText(value, maximum = 80) {
@@ -579,11 +594,25 @@
   }
 
   function booleanSetting(settings, key, label, inverse = false) {
-    if (!own(settings, key)) return "";
-    const value = scalar(settings[key]);
+    const explicit = own(settings, key);
+    const value = explicit ? booleanScalar(settings[key]) : false;
     if (typeof value !== "boolean") return `${label} configured`;
     const enabled = inverse ? !value : value;
-    return `${label} ${enabled ? "on" : "off"}`;
+    return `${label} ${enabled ? "on" : "off"}${explicit ? "" : " (default)"}`;
+  }
+
+  function enumSetting(object, key, defaultValue) {
+    const raw = own(object, key) ? scalar(object[key]) : undefined;
+    const defaulted =
+      raw === undefined || raw === null || raw === "" || raw === 0 || raw === "0";
+    return {
+      defaulted,
+      value: defaulted ? defaultValue : raw,
+    };
+  }
+
+  function defaultSuffix(defaulted) {
+    return defaulted ? " (default)" : "";
   }
 
   function effectiveStairsMode(mobility) {
@@ -595,7 +624,7 @@
       const hint = scalar(mobility.stairHint);
       if (typeof hint === "boolean") return hint ? 2 : 1;
     }
-    return mode;
+    return undefined;
   }
 
   function edgeParts(edge, preferences) {
@@ -615,27 +644,38 @@
     }
     if (fields.speed) {
       const text = speedText(mobility);
-      parts.push(text || "speed not set");
+      parts.push(text || "speed Medium (default)");
     }
     if (fields.bodyHeight) {
       const value = bodyHeight(mobility);
-      parts.push(value !== null ? `body height ${formatNumber(value)} m` : "body height not set");
+      parts.push(
+        value !== null
+          ? `body height ${formatNumber(value)} m`
+          : "body height 0 m (default)",
+      );
     }
     if (fields.gait) {
-      const value = enumLabel("gait", mobility.locomotionHint);
-      parts.push(value ? `gait ${value}` : "gait not set");
+      const setting = enumSetting(mobility, "locomotionHint", 3);
+      const value = enumLabel("gait", setting.value);
+      parts.push(`gait ${value}${defaultSuffix(setting.defaulted)}`);
     }
     if (fields.audioVisual) {
       if (own(settings, "audioVisualSettings")) {
         const behavior = settings.audioVisualSettings?.behaviorName;
-        parts.push(`audio/visual ${behavior ? compactText(behavior) : "configured"}`);
+        parts.push(
+          behavior
+            ? `audio/visual ${compactText(behavior)}`
+            : "audio/visual none (default)",
+        );
       } else {
-        parts.push("audio/visual not set");
+        parts.push("audio/visual none (default)");
       }
     }
     if (fields.pathFollowing) {
-      const value = enumLabel("path", settings.pathFollowingMode);
-      parts.push(value ? `path ${value}` : "path not set");
+      const setting = enumSetting(settings, "pathFollowingMode", 1);
+      const mode = Number(setting.value);
+      const value = mode === 2 ? "on" : mode === 1 ? "off" : enumLabel("path", mode);
+      parts.push(`strict path following ${value}${defaultSuffix(setting.defaulted)}`);
     }
     if (fields.obstaclePadding) {
       const value = finiteScalar(
@@ -644,28 +684,30 @@
       parts.push(
         value !== null
           ? `obstacle cushion ${formatNumber(value)} m`
-          : "obstacle cushion not set",
+          : "obstacle cushion 0 m (default)",
       );
     }
     if (fields.hazardDetection) {
-      const value = enumLabel("hazard", mobility.hazardDetectionMode);
-      parts.push(value ? `hazard ${value}` : "hazard not set");
+      const setting = enumSetting(mobility, "hazardDetectionMode", 2);
+      const value = enumLabel("hazard", setting.value);
+      parts.push(`hazard ${value}${defaultSuffix(setting.defaulted)}`);
     }
     if (fields.groundFriction) {
       const value = finiteScalar(mobility.terrainParams?.groundMuHint);
       parts.push(
         value !== null
           ? `ground friction ${formatNumber(value)}`
-          : "ground friction not set",
+          : "ground friction 0.6 (default)",
       );
     }
     if (fields.travelDirection) {
-      const value = enumLabel("direction", settings.directionConstraint);
-      parts.push(value ? `travel direction ${value}` : "travel direction not set");
+      const setting = enumSetting(settings, "directionConstraint", 4);
+      const value = enumLabel("direction", setting.value);
+      parts.push(`travel direction ${value}${defaultSuffix(setting.defaulted)}`);
     }
     if (fields.stairsMode) {
       const mode = enumLabel("stairs", effectiveStairsMode(mobility));
-      parts.push(mode ? `stairs ${mode}` : "stairs not set");
+      parts.push(mode ? `stairs ${mode}` : "stairs Orbit-managed (default)");
     }
     if (fields.automaticStairs) {
       if (own(mobility, "disallowStairTracker")) {
@@ -676,29 +718,36 @@
             : "automatic stairs configured",
         );
       } else {
-        parts.push("automatic stairs not set");
+        parts.push("automatic stairs on (default)");
       }
     }
     if (fields.stairAnnotation) {
       if (own(settings, "stairs")) {
         if (isObject(settings.stairs) && own(settings.stairs, "state")) {
           const state = enumLabel("stairAnnotation", settings.stairs.state);
-          parts.push(state ? `stair annotation ${state}` : "stair annotation not set");
+          parts.push(
+            state && state !== "Unknown"
+              ? `stair annotation ${state}`
+              : "stair annotation none (default)",
+          );
         } else {
           const value = scalar(settings.stairs);
           parts.push(
             typeof value === "boolean"
               ? `stair annotation ${value ? "on" : "off"}`
-              : "stair annotation configured",
+              : "stair annotation none (default)",
           );
         }
       } else {
-        parts.push("stair annotation not set");
+        parts.push("stair annotation none (default)");
       }
     }
     if (fields.swingHeight) {
-      const value = enumLabel("swing", mobility.swingHeight);
-      parts.push(value ? `swing height ${value}` : "swing height not set");
+      const raw = scalar(mobility.swingHeight);
+      const value = raw === 0 || raw === "0" ? "" : enumLabel("swing", raw);
+      parts.push(
+        value ? `swing height ${value}` : "swing height Orbit-managed (default)",
+      );
     }
     if (fields.mobilityOverride) {
       if (own(settings, "overrideMobilityParams")) {
@@ -707,10 +756,10 @@
           Array.isArray(paths) && paths.length
             ? `override ${paths.slice(0, 6).map((path) => compactText(path, 40)).join(", ")}` +
               `${paths.length > 6 ? ", …" : ""}`
-            : "mobility override configured",
+            : "override all fields (default)",
         );
       } else {
-        parts.push("mobility override not set");
+        parts.push("override all fields (default)");
       }
     }
     if (fields.alternateRoute) {
@@ -720,7 +769,7 @@
         "alternate route",
         true,
       );
-      parts.push(text || "alternate route not set");
+      parts.push(text);
     }
     if (fields.directedExploration) {
       const text = booleanSetting(
@@ -729,27 +778,34 @@
         "directed exploration",
         true,
       );
-      parts.push(text || "directed exploration not set");
+      parts.push(text);
     }
     if (fields.groundClutter) {
-      const value = enumLabel("clutter", settings.groundClutterMode);
-      parts.push(value ? `ground clutter ${value}` : "ground clutter not set");
+      const setting = enumSetting(settings, "groundClutterMode", 1);
+      const value = enumLabel("clutter", setting.value);
+      parts.push(`ground clutter ${value}${defaultSuffix(setting.defaulted)}`);
     }
     if (fields.alignment) {
       const text = booleanSetting(settings, "requireAlignment", "alignment");
-      parts.push(text || "alignment not set");
+      parts.push(text);
     }
     if (fields.flatGround) {
       const text = booleanSetting(settings, "flatGround", "flat ground");
-      parts.push(text || "flat ground not set");
+      parts.push(text);
     }
     if (fields.corridorDistance) {
       const value = finiteScalar(settings.maxCorridorDistance);
-      parts.push(value !== null ? `corridor ${formatNumber(value)} m` : "corridor not set");
+      parts.push(
+        value !== null && value > 0
+          ? `corridor ${formatNumber(value)} m`
+          : "corridor Orbit-managed (default)",
+      );
     }
     if (fields.cost) {
       const value = finiteScalar(settings.cost);
-      parts.push(value !== null ? `cost ${formatNumber(value)}` : "cost not set");
+      parts.push(
+        value !== null ? `cost ${formatNumber(value)}` : "cost Orbit-managed (default)",
+      );
     }
     if (fields.areaCallbacks) {
       const callbacks = Object.keys(settings.areaCallbacks || {});
@@ -1039,69 +1095,85 @@
           yaw: finiteScalar(maxVelocity?.angular),
         };
         return Object.values(value).every((item) => item === null)
-          ? MISSING_VALUE
+          ? EFFECTIVE_EDGE_DEFAULTS.speed
           : value;
       }
       case "bodyHeight":
-        return bodyHeight(mobility) ?? MISSING_VALUE;
+        return bodyHeight(mobility) ?? 0;
       case "gait":
-        return scalarOrMissing(mobility.locomotionHint);
+        return enumSetting(mobility, "locomotionHint", 3).value;
       case "audioVisual":
-        return own(settings, "audioVisualSettings")
-          ? settings.audioVisualSettings
-          : MISSING_VALUE;
+        return (
+          settings.audioVisualSettings?.behaviorName || EFFECTIVE_EDGE_DEFAULTS.audioVisual
+        );
       case "pathFollowing":
-        return scalarOrMissing(settings.pathFollowingMode);
+        return enumSetting(settings, "pathFollowingMode", 1).value;
       case "obstaclePadding":
-        return finiteOrMissing(mobility.obstacleParams?.obstacleAvoidancePadding);
+        return finiteScalar(mobility.obstacleParams?.obstacleAvoidancePadding) ?? 0;
       case "hazardDetection":
-        return scalarOrMissing(mobility.hazardDetectionMode);
+        return enumSetting(mobility, "hazardDetectionMode", 2).value;
       case "groundFriction":
-        return finiteOrMissing(mobility.terrainParams?.groundMuHint);
+        return finiteScalar(mobility.terrainParams?.groundMuHint) ?? 0.6;
       case "travelDirection":
-        return scalarOrMissing(settings.directionConstraint);
-      case "stairsMode":
-        return scalarOrMissing(effectiveStairsMode(mobility));
+        return enumSetting(settings, "directionConstraint", 4).value;
+      case "stairsMode": {
+        const value = scalarOrMissing(effectiveStairsMode(mobility));
+        return value === MISSING_VALUE
+          ? EFFECTIVE_EDGE_DEFAULTS.stairsMode
+          : value;
+      }
       case "automaticStairs":
         return own(mobility, "disallowStairTracker")
           ? scalarOrMissing(mobility.disallowStairTracker)
-          : MISSING_VALUE;
+          : false;
       case "stairAnnotation":
         return own(settings, "stairs")
-          ? scalarOrMissing(
-              isObject(settings.stairs) && own(settings.stairs, "state")
-                ? settings.stairs.state
-                : settings.stairs,
-            )
-          : MISSING_VALUE;
-      case "swingHeight":
-        return scalarOrMissing(mobility.swingHeight);
+          ? (() => {
+              if (isObject(settings.stairs) && !own(settings.stairs, "state")) return 2;
+              const value = scalarOrMissing(
+                isObject(settings.stairs) ? settings.stairs.state : settings.stairs,
+              );
+              return value === MISSING_VALUE || value === 0 || value === "0" ? 2 : value;
+            })()
+          : 2;
+      case "swingHeight": {
+        const value = scalarOrMissing(mobility.swingHeight);
+        return value === MISSING_VALUE || value === 0 || value === "0"
+          ? EFFECTIVE_EDGE_DEFAULTS.swingHeight
+          : value;
+      }
       case "mobilityOverride":
-        return own(settings, "overrideMobilityParams")
-          ? settings.overrideMobilityParams
-          : MISSING_VALUE;
+        return Array.isArray(settings.overrideMobilityParams?.paths)
+          ? [...settings.overrideMobilityParams.paths].sort()
+          : [];
       case "alternateRoute":
         return own(settings, "disableAlternateRouteFinding")
           ? scalarOrMissing(settings.disableAlternateRouteFinding)
-          : MISSING_VALUE;
+          : false;
       case "directedExploration":
         return own(settings, "disableDirectedExploration")
           ? scalarOrMissing(settings.disableDirectedExploration)
-          : MISSING_VALUE;
+          : false;
       case "groundClutter":
-        return scalarOrMissing(settings.groundClutterMode);
+        return enumSetting(settings, "groundClutterMode", 1).value;
       case "alignment":
         return own(settings, "requireAlignment")
-          ? scalarOrMissing(settings.requireAlignment)
-          : MISSING_VALUE;
+          ? booleanScalar(settings.requireAlignment)
+          : false;
       case "flatGround":
         return own(settings, "flatGround")
-          ? scalarOrMissing(settings.flatGround)
-          : MISSING_VALUE;
-      case "corridorDistance":
-        return finiteOrMissing(settings.maxCorridorDistance);
-      case "cost":
-        return finiteOrMissing(settings.cost);
+          ? booleanScalar(settings.flatGround)
+          : false;
+      case "corridorDistance": {
+        const value = finiteScalar(settings.maxCorridorDistance);
+        return value !== null && value > 0
+          ? value
+          : EFFECTIVE_EDGE_DEFAULTS.corridorDistance;
+      }
+      case "cost": {
+        const value = finiteOrMissing(settings.cost);
+        return value === MISSING_VALUE ? EFFECTIVE_EDGE_DEFAULTS.cost : value;
+      }
       default:
         return MISSING_VALUE;
     }
@@ -1152,7 +1224,7 @@
         edgeFieldRawValue(settings, field.edgeField)
       );
       if (rawValues.every((value) => value === MISSING_VALUE)) {
-        parts.push(`${field.label.toLocaleLowerCase()} not set`);
+        parts.push(`${field.label.toLocaleLowerCase()} unavailable`);
         continue;
       }
       const distinct = new Map();
@@ -1161,9 +1233,10 @@
         parts.push(`${field.label.toLocaleLowerCase()} mixed (${distinct.size})`);
         continue;
       }
-      const value = edgeVariants
+      const values = edgeVariants
         .map((settings) => edgeParts({ settings }, edgePreferences)[0])
-        .find(Boolean);
+        .filter(Boolean);
+      const value = values.find((item) => !item.includes(" (default)")) || values[0];
       if (value) parts.push(`edge ${value}`);
     }
 

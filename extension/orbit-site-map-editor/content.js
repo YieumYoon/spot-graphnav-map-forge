@@ -39,7 +39,12 @@
     { maxZoom: 1.2, cellWidth: 90, cellHeight: 24 },
     { maxZoom: Infinity, cellWidth: 0, cellHeight: 0 },
   ];
-  const AREA_LABEL_MIN_ZOOM = 0.8;
+  const AREA_LABEL_DENSITY_STEPS = [
+    { maxZoom: 0.8, cellWidth: 240, cellHeight: 44 },
+    { maxZoom: 1.25, cellWidth: 190, cellHeight: 38 },
+    { maxZoom: 1.5, cellWidth: 140, cellHeight: 30 },
+    { maxZoom: Infinity, cellWidth: 0, cellHeight: 0 },
+  ];
   const MUTATION_COMMANDS = new Set([
     "connect",
     "archive_edges",
@@ -1962,11 +1967,11 @@
       actionNameGroup.append(label);
     }
 
-    if (areaLabelsVisible && zoom >= AREA_LABEL_MIN_ZOOM) {
+    if (areaLabelsVisible) {
       const areaCandidatesByCell = new Map();
       const selectedAreaIds = new Set(areaOverlay.selectedIds || []);
-      const cellWidth = zoom < 1.25 ? 190 : zoom < 1.5 ? 140 : 0;
-      const cellHeight = zoom < 1.25 ? 38 : zoom < 1.5 ? 30 : 0;
+      const areaLabelDensity = labelDensity(AREA_LABEL_DENSITY_STEPS, zoom);
+      const { cellHeight, cellWidth } = areaLabelDensity;
       const areaRecords = [...areaRecordsForOverlay()].sort((left, right) =>
         Number(selectedAreaIds.has(right.id)) - Number(selectedAreaIds.has(left.id)) ||
         left.id.localeCompare(right.id)
@@ -2016,7 +2021,7 @@
         )
         .slice(0, MAX_OVERLAY_AREAS);
       for (const { item, parts, point } of areaCandidates) {
-        const summary = boundedOverlayLabel(parts);
+        const summary = overlayRenderer.boundedLabel(parts);
         const display = summary.display;
         if (!display) continue;
         const x = point.x + 9;

@@ -8,11 +8,12 @@ identifiers.
 
 - Orbit Site Map editor: 5.1 series
 - Extension: `extension/orbit-site-map-editor`
-- Extension release: 0.14.2
+- Extension release: 0.14.4
 - Native edit adapter baseline: 0.2.2
 - Migration Assistant extension: `extension/orbit-graph-repair`
 - Migration Assistant release: 0.8.1
 - Current-build static qualification date: 2026-07-29
+- Latest live effective-Edge-default qualification date: 2026-07-29
 - Latest live read-only validation-reason qualification date: 2026-07-27
 - Latest live mutation qualification date: 2026-07-24
 
@@ -48,6 +49,30 @@ One validated candidate passed all of these checks in the live Orbit editor:
    **Save** again.
 
 Result: **passed**. Orbit **Save** was never pressed.
+
+## 0.14.4 effective Edge-default overlay probe — passed
+
+The unpacked 0.14.4 development build was reloaded before the Orbit tab and exercised against an
+authenticated Orbit 5.1 editor without creating a draft:
+
+- the extension card and the single live panel both showed the matching
+  `0.14.4 dev effective-edge-defaults` label, and the extension card exposed no current error list;
+- a selected Edge whose only modeled setting was cost still showed Orbit's native effective form
+  defaults: Medium velocity, zero body height and obstacle cushion, Walk gait, no audio/visual
+  behavior, non-strict path following, Avoid hazard detection, 0.6 ground friction, no direction
+  constraint, alternate-route and Directed Exploration enabled, ground-clutter avoidance disabled,
+  and automatic stairs enabled;
+- the same live Edge produced `(default)` overlay values for every omitted setting, including
+  `directed exploration on (default)`, instead of `not set`;
+- live stored enum values rendered with Orbit's user-facing names, including Walk/Crawl and
+  Avoid/Prefer Avoid, while ground-clutter and strict-path values rendered as on/off states;
+- selecting and restoring the audit target did not change the edit index or history depth, and the
+  final Orbit state had no draft, Undo entry, selected object, or enabled Save/Cancel action;
+- the temporary Gait and Hazard overlay controls used during the probe were returned to their prior
+  off state, leaving the original two selected Edge fields unchanged.
+
+Result: **passed** for effective default labels, Orbit-facing enum names, one-panel injection, and
+read-only selection. Orbit **Save** was never pressed.
 
 ## 0.12.5 Connect validation-reason probe — passed
 
@@ -209,16 +234,20 @@ The Detailed-overlay simulations additionally prove:
 - Edge speed, body height, gait, obstacle cushion, hazard detection, ground friction, stored
   connection arrows, direction of travel, path mode, route settings, and zero-valued cost remain
   independently selectable;
-- selected Edge fields that are absent from the snapshot render as `not set` instead of dropping
-  the entire Edge label;
+- Edge fields omitted from the snapshot render their live-qualified effective Orbit value with a
+  `(default)` suffix instead of the ambiguous `not set`;
+- Orbit-facing enum labels match the native form (`Walk`/`Crawl`, `Avoid`/`Prefer Avoid`, strict
+  path on/off, and ground-clutter on/off), while explicit zero and false values remain visible;
+- Area-associated Edge aggregation treats omitted protobuf defaults and their explicit equivalents
+  as one effective value instead of reporting a false `mixed` variant;
 - meaningful `false` and `0` values are rendered instead of being dropped as defaults;
 - Area callback controls expose only current parameter values, collapse equivalent top-level and
   recorded-data representations, hide form specs/defaults/options/UI metadata, remain bounded to
   200 entries, and report missing or mixed variants without choosing an arbitrary value;
 - Area-associated Edge values read the same source settings as the per-Edge overlay, use the same
   independent field formatters, and compare raw values before display rounding;
-- Waypoint and Edge labels use deterministic wide-scale density sampling, while Area labels begin
-  at `0.8×` zoom and stay density-sampled until `1.5×`;
+- Waypoint, Edge, and Area labels use deterministic wide-scale density sampling; Area labels use
+  coarser cells at the widest scales and show every visible Area from `1.5×` zoom;
 - the Areas workspace no longer owns a second session-only map-label toggle.
 
 ## 2026-07-27 Action-name adapter discovery

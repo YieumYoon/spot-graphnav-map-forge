@@ -142,8 +142,11 @@ The Explore tab's **Detailed overlay** keeps separate **Overall**, **Waypoints**
 speed, gait, stored connection direction, or Orbit's direction-of-travel setting without the other
 details. Waypoint values include identity, recording, degree, robot, timestamp, and the read-back
 visual/thermal panorama settings. Edge values expose the public mobility, path, environment, cost,
-and Area-callback annotations as independent controls. An enabled Edge value that is absent from
-the read-only snapshot is labeled `not set` instead of silently suppressing the entire Edge label.
+and Area-callback annotations as independent controls. Edge labels use the effective values shown
+by Orbit's editor. When an omitted protobuf field receives an Orbit form default, the label shows
+that value with `(default)`—for example `directed exploration on (default)`—instead of the
+ambiguous `not set`. Explicit settings omit the suffix. Orbit's `Walk`/`Crawl`, `Avoid`/`Prefer
+Avoid`, strict-path, and ground-clutter wording is used instead of lower-level protobuf enum names.
 
 Area controls visually separate **Area identity**, **Same Edge settings, grouped by Area**, and
 **Callback parameters**. The middle section does not read a second Area-owned copy: it aggregates
@@ -154,17 +157,20 @@ representations are collapsed. Every callback value that can appear in an Area l
 matching searchable control. Mixed callback or associated-Edge variants are labeled `mixed (N)`
 instead of choosing one value.
 
-Waypoint and Edge labels remain available at wide map scales through deterministic screen-cell
-sampling; selected, work-selection, and finding objects are prioritized. Area labels intentionally
-start at `0.8×` zoom, are sampled until `1.5×`, and then show every visible Area within the render
-bound. Map labels still use a bounded summary, so select the few values needed for the current
-inspection. These preferences are retained across reloads, and legacy flat overlay preferences are
-migrated automatically. Action-name labels remain owned by **Action Names** and independent of
-this master control.
+Waypoint, Edge, and Area labels remain available at wide map scales through deterministic
+screen-cell sampling; selected, work-selection, and finding objects are prioritized. Area labels
+use a coarser density step than Waypoint labels at the widest scales, progressively reveal more
+while zooming in, and show every visible Area from `1.5×` zoom. Map labels still use a bounded
+summary, so select the few values needed for the current inspection. These preferences are
+retained across reloads, and legacy flat overlay preferences are migrated automatically.
+Action-name labels remain owned by **Action Names** and independent of this master control.
 
-The overlay reports only settings present in the extension's read-only graph snapshot. Orbit's
-native Waypoint localize/lost-detector/infrared controls and the allow-travel state of Edges already
-filtered out of the active graph are not inferred or shown as fabricated values.
+The overlay reads only the extension's read-only graph snapshot. For Edge fields, it applies the
+documented or live-qualified Orbit defaults and identifies them with `(default)`; Area Edge
+aggregation compares these effective values, so an omitted default and its explicit equivalent do
+not produce a false `mixed` result. Orbit's native Waypoint localize/lost-detector/infrared controls
+and the allow-travel state of Edges already filtered out of the active graph are not inferred or
+shown as fabricated values.
 
 The **Areas** tab derives each Area's effective callback and traversal settings from its associated
 active Edges. Explore's Area overlay controls choose the label fields shown at the Area or

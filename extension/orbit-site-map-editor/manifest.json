@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Orbit Site Map Editor",
   "description": "Adds exact-ID editing, graph validation, and mission-independent Site View coverage planning to the Orbit Site Map editor.",
-  "version": "0.14.2",
+  "version": "0.14.4",
   "permissions": [
     "storage"
   ],

@@ -394,6 +394,28 @@ def test_overlay_preferences_and_each_label_value_are_independent() -> None:
           '{"area":{"callbackFields":{"/safe":true,"/constructor":true,' +
           '"/recordedData/parameters/specs/timeout/uiInfo/displayName":true}}}'
         ));
+        const explicitOrbitDefaults = {
+          directionConstraint: 4,
+          pathFollowingMode: 1,
+          disableAlternateRouteFinding: false,
+          disableDirectedExploration: false,
+          groundClutterMode: 1,
+          requireAlignment: {value: false},
+          flatGround: {value: false},
+          maxCorridorDistance: 0,
+          stairs: {state: 2},
+          overrideMobilityParams: {paths: []},
+          mobilityParams: {
+            bodyControl: {baseOffsetRtFootprint: {points: [{
+              pose: {position: {z: 0}},
+            }]}},
+            locomotionHint: 3,
+            obstacleParams: {obstacleAvoidancePadding: 0},
+            hazardDetectionMode: 2,
+            terrainParams: {groundMuHint: {value: 0.6}},
+            disallowStairTracker: false,
+          },
+        };
 
         const groups = overlay.CONTROL_GROUPS.map((group) => ({
           id: group.id,
@@ -467,6 +489,17 @@ def test_overlay_preferences_and_each_label_value_are_independent() -> None:
               ]),
             ),
           },
+          defaultEdge: Object.fromEntries([
+            "speed", "bodyHeight", "gait", "audioVisual", "pathFollowing",
+            "obstaclePadding", "hazardDetection", "groundFriction",
+            "travelDirection", "stairsMode", "automaticStairs",
+            "stairAnnotation", "swingHeight", "mobilityOverride",
+            "alternateRoute", "directedExploration", "groundClutter",
+            "alignment", "flatGround", "corridorDistance", "cost",
+            "areaCallbacks",
+          ].map((field) => [field, overlay.edgeParts(
+            {settings: {}}, only("edge", field)
+          )])),
           areaCatalog: overlay.areaCallbackFieldCatalog([area]),
           area: overlay.areaParts(area, areaPreferences),
           areaMissing: overlay.areaParts(area, missingPreferences),
@@ -474,6 +507,16 @@ def test_overlay_preferences_and_each_label_value_are_independent() -> None:
           areaEdgeSpeed: overlay.areaParts(area, onlyArea("edgeSpeed")),
           areaEdgeGait: overlay.areaParts(area, onlyArea("edgeGait")),
           areaEdgeCost: overlay.areaParts(area, onlyArea("edgeCost")),
+          areaEffectiveDefaults: Object.fromEntries([
+            "edgeBodyHeight", "edgeGait", "edgePathFollowing",
+            "edgeObstaclePadding", "edgeHazardDetection", "edgeGroundFriction",
+            "edgeTravelDirection", "edgeAutomaticStairs", "edgeStairAnnotation",
+            "edgeMobilityOverride", "edgeAlternateRoute", "edgeDirectedExploration",
+            "edgeGroundClutter", "edgeAlignment", "edgeFlatGround",
+            "edgeCorridorDistance",
+          ].map((field) => [field, overlay.areaParts(
+            {edgeSettings: [{}, explicitOrbitDefaults]}, onlyArea(field)
+          )])),
           areaIdentity: {
             id: overlay.areaParts(area, onlyArea("id")),
             type: overlay.areaParts(area, onlyArea("type")),
@@ -704,10 +747,10 @@ def test_overlay_preferences_and_each_label_value_are_independent() -> None:
         "gait": ["gait Crawl"],
         "bodyHeight": ["body height 0 m"],
         "obstacle": ["obstacle cushion 0 m"],
-        "hazard": ["hazard On"],
+        "hazard": ["hazard Avoid"],
         "friction": ["ground friction 0.2"],
         "travel": ["travel direction None"],
-        "path": ["path Strict"],
+        "path": ["strict path following on"],
         "id": ["id edge-1…567890"],
         "from": ["from from-w…nt-123"],
         "to": ["to to-way…nt-456"],
@@ -718,10 +761,10 @@ def test_overlay_preferences_and_each_label_value_are_independent() -> None:
         "audioVisual": ["audio/visual crosswalk"],
         "alternate": ["alternate route on"],
         "directed": ["directed exploration off"],
-        "groundClutter": ["ground clutter From footfalls"],
+        "groundClutter": ["ground clutter on (recorded footfalls)"],
         "alignment": ["alignment off"],
         "flatGround": ["flat ground on"],
-        "corridor": ["corridor 0 m"],
+        "corridor": ["corridor Orbit-managed (default)"],
         "stairMode": ["stairs Auto"],
         "automaticStairs": ["automatic stairs on"],
         "stairAnnotation": ["stair annotation Set"],
@@ -735,10 +778,34 @@ def test_overlay_preferences_and_each_label_value_are_independent() -> None:
         ],
         "cost": ["cost 0"],
         "unset": [
-            "directed exploration not set",
-            "alignment not set",
-            "corridor not set",
+            "directed exploration on (default)",
+            "alignment off (default)",
+            "corridor Orbit-managed (default)",
         ],
+    }
+    assert result["defaultEdge"] == {
+        "speed": ["speed Medium (default)"],
+        "bodyHeight": ["body height 0 m (default)"],
+        "gait": ["gait Walk (default)"],
+        "audioVisual": ["audio/visual none (default)"],
+        "pathFollowing": ["strict path following off (default)"],
+        "obstaclePadding": ["obstacle cushion 0 m (default)"],
+        "hazardDetection": ["hazard Avoid (default)"],
+        "groundFriction": ["ground friction 0.6 (default)"],
+        "travelDirection": ["travel direction None (default)"],
+        "stairsMode": ["stairs Orbit-managed (default)"],
+        "automaticStairs": ["automatic stairs on (default)"],
+        "stairAnnotation": ["stair annotation none (default)"],
+        "swingHeight": ["swing height Orbit-managed (default)"],
+        "mobilityOverride": ["override all fields (default)"],
+        "alternateRoute": ["alternate route on (default)"],
+        "directedExploration": ["directed exploration on (default)"],
+        "groundClutter": ["ground clutter off (default)"],
+        "alignment": ["alignment off (default)"],
+        "flatGround": ["flat ground off (default)"],
+        "corridorDistance": ["corridor Orbit-managed (default)"],
+        "cost": ["cost Orbit-managed (default)"],
+        "areaCallbacks": ["Area callbacks 0"],
     }
     assert [field["path"] for field in result["areaCatalog"]] == [
         "/recordedData/customParams/values/enabled",
@@ -750,6 +817,24 @@ def test_overlay_preferences_and_each_label_value_are_independent() -> None:
     assert result["areaEdgeSpeed"] == ["edge speed mixed (2)"]
     assert result["areaEdgeGait"] == ["edge gait Crawl"]
     assert result["areaEdgeCost"] == ["edge cost 0"]
+    assert result["areaEffectiveDefaults"] == {
+        "edgeBodyHeight": ["edge body height 0 m"],
+        "edgeGait": ["edge gait Walk"],
+        "edgePathFollowing": ["edge strict path following off"],
+        "edgeObstaclePadding": ["edge obstacle cushion 0 m"],
+        "edgeHazardDetection": ["edge hazard Avoid"],
+        "edgeGroundFriction": ["edge ground friction 0.6"],
+        "edgeTravelDirection": ["edge travel direction None"],
+        "edgeAutomaticStairs": ["edge automatic stairs on"],
+        "edgeStairAnnotation": ["edge stair annotation None"],
+        "edgeMobilityOverride": ["edge override all fields (default)"],
+        "edgeAlternateRoute": ["edge alternate route on"],
+        "edgeDirectedExploration": ["edge directed exploration on"],
+        "edgeGroundClutter": ["edge ground clutter off"],
+        "edgeAlignment": ["edge alignment off"],
+        "edgeFlatGround": ["edge flat ground off"],
+        "edgeCorridorDistance": ["edge corridor Orbit-managed (default)"],
+    }
     assert result["areaIdentity"] == {
         "id": ["id area-1"],
         "type": ["type edge area callback"],
@@ -994,15 +1079,18 @@ def test_area_settings_aggregate_labels_and_build_partial_or_full_batches() -> N
     assert "priorityLabels" in content
     assert "WAYPOINT_LABEL_DENSITY_STEPS" in content
     assert "EDGE_LABEL_DENSITY_STEPS" in content
-    assert "const AREA_LABEL_MIN_ZOOM = 0.8;" in content
-    assert "areaLabelsVisible && zoom >= AREA_LABEL_MIN_ZOOM" in content
+    assert "AREA_LABEL_DENSITY_STEPS" in content
+    assert "if (areaLabelsVisible)" in content
+    assert "areaLabelsVisible && zoom" not in content
+    assert "overlayRenderer.boundedLabel(parts)" in content
+    assert "boundedOverlayLabel" not in content
     assert "zoom >= 0.72 || selected || candidate" not in content
     assert "zoom >= 1.2 || priority" not in content
     assert "Same Edge settings, grouped by Area" in (EXTENSION / "overlay-settings.js").read_text(
         encoding="utf-8"
     )
     assert 'lineAttributes["marker-end"] = "url(#osme-edge-arrow)"' in content
-    area_render = content[content.index("if (areaLabelsVisible && zoom >= AREA_LABEL_MIN_ZOOM)") :]
+    area_render = content[content.index("if (areaLabelsVisible)") :]
     assert area_render.index("const parts = overlaySettings.areaParts") < area_render.index(
         "const key = item.selected"
     )
